@@ -8,3 +8,8 @@ file.json
 node*.json
 *_sheet.png
 sidebar_ref.png
+
+# scratch: local test harness (serves zaddz.lua to the executor over localhost)
+serve*.cjs
+_example_test.lua
+live*.lua
