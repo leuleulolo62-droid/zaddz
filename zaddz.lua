@@ -434,7 +434,7 @@ local function settingsGroup(parent, title)
         BackgroundColor3 = T.Panel, Size = UDim2.new(1, -8, 1, 0),
         Position = UDim2.fromOffset(4, 0), BorderSizePixel = 0, ZIndex = 41, Parent = parent,
     })
-    corner(P, 10)
+    corner(P, 6) -- sits inside a radius-7 panel, so it must be tighter, not rounder
     new("UIStroke", { Color = Color3.fromRGB(44, 44, 44), Thickness = 1, Parent = P })
     new("TextLabel", {
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 6),
@@ -613,7 +613,7 @@ function Library:OpenSettings()
         AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 40, ClipsDescendants = true,
         Parent = self._popupLayer,
     })
-    corner(S, 12)
+    corner(S, 7) -- match Main's radius; 12 read as a bubble next to the window
     new("UIStroke", { Color = Color3.fromRGB(48, 48, 48), Thickness = 1, Parent = S })
     self._settings = S
     self._settingsOpenedAt = os.clock()
@@ -1519,6 +1519,10 @@ function Library:CreateWindow(opts)
     self._main = Main
     self.Open = true -- keeps the Insert toggle in sync with the intro animation
     tween(Main, { Size = UDim2.fromOffset(851, 597) }, 0.3, Enum.EasingStyle.Back)
+    -- Blur the intro too. Only SetOpen/OpenSettings called this, so on a fresh load the
+    -- effect did not exist yet and the world stayed sharp until you opened settings or
+    -- toggled Insert twice -- which read as "blur only works in settings".
+    task.defer(function() self:ApplyBlur(true) end)
 
     -- body #131313 @x3 (Figma: Rectangle 1 at x=3, w=848)
     local Body = new("Frame", {
