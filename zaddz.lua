@@ -52,6 +52,8 @@ local Library = {
     IconBase = "https://raw.githubusercontent.com/leuleulolo62-droid/zaddz/main/icons/",
     IconVersion = "v2", -- bump on any icons/ change to invalidate the on-disk cache
     IconSize = 30,      -- sidebar glyph max dimension (Fit preserves each icon's aspect)
+    GlowIntensity = 0.45, -- selected-tab halo strength (0 = solid, 1 = invisible)
+    Blur = { Enabled = true, Size = 14, Tint = Color3.fromRGB(0, 0, 0), Alpha = 0.55 },
     _icons = {},
     _popups = {},
 }
@@ -110,7 +112,10 @@ end
 function Library:MakePopup(w, h)
     local frame = new("Frame", {
         BackgroundColor3 = T.Panel, Size = UDim2.fromOffset(w, 0),
-        Visible = false, ClipsDescendants = true, BorderSizePixel = 0,
+        -- Active = true so the panel ABSORBS input. A plain Frame is Active=false and Roblox
+        -- passes clicks/drags straight through it, so a slider sitting behind an open colour
+        -- picker still dragged while you were picking a colour.
+        Visible = false, ClipsDescendants = true, BorderSizePixel = 0, Active = true,
         ZIndex = 51, Parent = self._popupLayer,
     })
     corner(frame, 12)
@@ -333,27 +338,59 @@ function Library:RefreshKeybinds()
     if self._kbList then self._kbList.Size = UDim2.fromOffset(168, 28 + n * 18) end
 end
 
--- Repaint the accent live. Rather than registering every accent-coloured object at build
--- time (bookkeeping that rots the moment someone adds a widget), sweep the tree and swap
--- whatever currently equals the old accent. The accent is a distinctive colour, so a
--- false match is unlikely, and this stays correct for widgets added later.
+-- Repaint any theme token live. Rather than registering every coloured object at build time
+-- (bookkeeping that rots the moment someone adds a widget), sweep the tree and swap whatever
+-- currently equals the OLD value of that token. Stays correct for widgets added later.
+-- Caveat: it matches by colour, so two tokens sharing an exact value are indistinguishable.
 local buildSection -- fwd decl: defined below, but OpenSettings above needs the upvalue
-local ACCENT_PROPS = { "BackgroundColor3", "ImageColor3", "TextColor3", "Color" }
-function Library:SetAccent(c)
-    local old = T.Accent
-    if not c or not self._gui then return end
-    local function same(a, b)
-        return math.abs(a.R - b.R) < 0.01 and math.abs(a.G - b.G) < 0.01 and math.abs(a.B - b.B) < 0.01
-    end
+local COLOR_PROPS = { "BackgroundColor3", "ImageColor3", "TextColor3", "Color" }
+local function sameColor(a, b)
+    return math.abs(a.R - b.R) < 0.004 and math.abs(a.G - b.G) < 0.004 and math.abs(a.B - b.B) < 0.004
+end
+function Library:SetThemeColor(key, c)
+    local old = T[key]
+    if not c or typeof(old) ~= "Color3" or not self._gui then return end
+    if sameColor(old, c) then return end
     for _, root in ipairs({ self._gui, self._hudGui }) do -- HUDs live on their own ScreenGui
         for _, d in ipairs(root:GetDescendants()) do
-            for _, prop in ipairs(ACCENT_PROPS) do
+            for _, prop in ipairs(COLOR_PROPS) do
                 local ok, v = pcall(function() return d[prop] end)
-                if ok and typeof(v) == "Color3" and same(v, old) then pcall(function() d[prop] = c end) end
+                if ok and typeof(v) == "Color3" and sameColor(v, old) then
+                    pcall(function() d[prop] = c end)
+                end
             end
         end
     end
-    T.Accent = c -- anything built from here on picks it up directly
+    T[key] = c -- anything built from here on picks it up directly
+end
+function Library:SetAccent(c) return self:SetThemeColor("Accent", c) end
+
+-- BLUR — a real Lighting BlurEffect plus a tint sheet, so the world behind the menu drops
+-- back instead of the panel floating on a busy scene. Both are driven from Library.Blur.
+function Library:_ensureBlur()
+    if self._blurFx and self._blurFx.Parent then return end
+    local Lighting = game:GetService("Lighting")
+    self._blurFx = new("BlurEffect", { Name = "zaddz_blur", Size = 0, Enabled = true, Parent = Lighting })
+    -- tint lives on its own ScreenGui UNDER the menu (DisplayOrder 9997 < 9998 hud < 9999 menu)
+    if not self._tintGui then
+        self._tintGui = new("ScreenGui", {
+            Name = "zaddz_tint", ResetOnSpawn = false, DisplayOrder = 9997,
+            IgnoreGuiInset = true, Parent = self._gui.Parent,
+        })
+        self._tint = new("Frame", {
+            BackgroundColor3 = self.Blur.Tint, BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, Parent = self._tintGui,
+        })
+    end
+end
+-- `extra` lets the settings panel deepen the blur on top of the base menu blur.
+function Library:ApplyBlur(on, extra)
+    self:_ensureBlur()
+    local B = self.Blur
+    local size = (on and B.Enabled) and (B.Size + (extra or 0)) or 0
+    tween(self._blurFx, { Size = size }, 0.25)
+    self._tint.BackgroundColor3 = B.Tint
+    tween(self._tint, { BackgroundTransparency = (on and B.Enabled) and (1 - B.Alpha) or 1 }, 0.25)
 end
 
 -- Animated show/hide. ScreenGui.Enabled is a hard cut, so drive Main's scale+fade and only
@@ -364,6 +401,7 @@ function Library:SetOpen(open, instant)
     self.Open = open and true or false
     if open then
         self._gui.Enabled = true
+        self:ApplyBlur(true, self._settings and self._settings.Visible and 8 or 0)
         if instant then main.Size = UDim2.fromOffset(851, 597) return end
         main.Size = UDim2.fromOffset(0, 0)
         self._animating = true
@@ -371,6 +409,10 @@ function Library:SetOpen(open, instant)
         task.delay(0.29, function() self._animating = false end)
     else
         self:ClosePopups()
+        -- The settings modal is a child of Main, so closing the window used to yank it away
+        -- with no animation of its own. Collapse it first so it reads as one motion.
+        if self._settings and self._settings.Visible then self:CloseSettings() end
+        self:ApplyBlur(false)
         if instant then self._gui.Enabled = false return end
         self._animating = true
         -- Back/In anticipates (a small swell) before collapsing -- reads deliberate rather
@@ -384,71 +426,207 @@ function Library:SetOpen(open, instant)
 end
 function Library:Toggle() self:SetOpen(not self.Open) end
 
--- SETTINGS MODAL — opened by the gear. Hand-rolled rows rather than the Section builders,
--- which are closures scoped inside AddTab and can't be reached from here.
--- SETTINGS — built from the SAME buildSection() controls as the menu, so the toggles,
--- sliders and dropdowns are pixel-identical to a real tab instead of look-alikes.
+-- SETTINGS — built from the SAME buildSection() controls as the menu, so every toggle,
+-- slider and picker is pixel-identical to a real tab instead of a hand-rolled look-alike.
+-- Grouped into panels (Menu / Colours / Background) exactly like a tab's sections.
+local function settingsGroup(parent, title)
+    local P = new("Frame", {
+        BackgroundColor3 = T.Panel, Size = UDim2.new(1, -8, 1, 0),
+        Position = UDim2.fromOffset(4, 0), BorderSizePixel = 0, ZIndex = 41, Parent = parent,
+    })
+    corner(P, 10)
+    new("UIStroke", { Color = Color3.fromRGB(44, 44, 44), Thickness = 1, Parent = P })
+    new("TextLabel", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 6),
+        Font = T.Font, TextSize = 14, TextColor3 = T.Text, Text = title, ZIndex = 42, Parent = P,
+    })
+    local body = new("ScrollingFrame", {
+        BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 28),
+        Size = UDim2.new(1, 0, 1, -34), CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+        ScrollBarImageColor3 = T.Scroll, ZIndex = 42, Parent = P,
+    })
+    new("UIListLayout", { Padding = UDim.new(0, 9), SortOrder = Enum.SortOrder.LayoutOrder, Parent = body })
+    return body
+end
+
+-- CONFIGS — flags + theme + keybinds serialised to JSON in the executor workspace.
+-- Color3 can't survive JSONEncode, so colours are stored as {r,g,b} 0-255 triplets.
+local HttpService = game:GetService("HttpService")
+Library.ConfigFolder = "zaddz_configs"
+
+local function packColor(c)
+    return { math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5) }
+end
+local function unpackColor(t)
+    if typeof(t) ~= "table" or #t < 3 then return nil end
+    return Color3.fromRGB(t[1], t[2], t[3])
+end
+
+function Library:GetConfigList()
+    local out = {}
+    if not (isfolder and listfiles and isfolder(self.ConfigFolder)) then return out end
+    local ok, files = pcall(listfiles, self.ConfigFolder)
+    if not ok then return out end
+    for _, f in ipairs(files) do
+        local name = f:match("([^/\\]+)%.json$")
+        if name then table.insert(out, name) end
+    end
+    table.sort(out)
+    return out
+end
+
+-- Everything the UI owns: control values, the whole theme, the menu key, blur.
+function Library:Serialize()
+    local flags = {}
+    for k, v in pairs(self.Flags) do
+        local ty = typeof(v)
+        if ty == "Color3" then flags[k] = { __c = packColor(v) }
+        elseif ty == "number" or ty == "boolean" or ty == "string" then flags[k] = v end
+    end
+    local theme = {}
+    for k, v in pairs(self.Theme) do
+        if typeof(v) == "Color3" then theme[k] = packColor(v) end
+    end
+    return {
+        version = 1, flags = flags, theme = theme,
+        toggleKey = self.ToggleKey and self.ToggleKey.Name or "Insert",
+        iconSize = self.IconSize, glow = self.GlowIntensity,
+        blur = { Enabled = self.Blur.Enabled, Size = self.Blur.Size,
+                 Alpha = self.Blur.Alpha, Tint = packColor(self.Blur.Tint) },
+    }
+end
+
+function Library:Deserialize(data)
+    if typeof(data) ~= "table" then return false, "bad config" end
+    for k, v in pairs(data.theme or {}) do
+        local c = unpackColor(v)
+        if c and typeof(self.Theme[k]) == "Color3" then self:SetThemeColor(k, c) end
+    end
+    if data.blur then
+        self.Blur.Enabled = data.blur.Enabled ~= false
+        self.Blur.Size = tonumber(data.blur.Size) or self.Blur.Size
+        self.Blur.Alpha = tonumber(data.blur.Alpha) or self.Blur.Alpha
+        self.Blur.Tint = unpackColor(data.blur.Tint) or self.Blur.Tint
+        self:ApplyBlur(self.Open)
+    end
+    if data.toggleKey and Enum.KeyCode[data.toggleKey] then self.ToggleKey = Enum.KeyCode[data.toggleKey] end
+    if data.glow then self.GlowIntensity = data.glow end
+    -- push values back THROUGH the controls, so the UI redraws and callbacks fire
+    for k, v in pairs(data.flags or {}) do
+        local opt = self.Options[k]
+        if opt and opt.SetValue then
+            local val = v
+            if typeof(v) == "table" and v.__c then val = unpackColor(v.__c) end
+            pcall(function() opt:SetValue(val) end)
+        end
+    end
+    return true
+end
+
+function Library:SaveConfig(name)
+    if not name or name == "" then return false, "name required" end
+    if not writefile then return false, "executor has no writefile" end
+    if makefolder and not (isfolder and isfolder(self.ConfigFolder)) then makefolder(self.ConfigFolder) end
+    local ok, enc = pcall(function() return HttpService:JSONEncode(self:Serialize()) end)
+    if not ok then return false, "encode failed" end
+    local ok2, err = pcall(writefile, self.ConfigFolder .. "/" .. name .. ".json", enc)
+    if not ok2 then return false, tostring(err) end
+    return true
+end
+
+function Library:LoadConfig(name)
+    if not (readfile and isfile) then return false, "executor has no readfile" end
+    local path = self.ConfigFolder .. "/" .. name .. ".json"
+    if not isfile(path) then return false, "no such config" end
+    local ok, raw = pcall(readfile, path)
+    if not ok then return false, "read failed" end
+    local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
+    if not ok2 then return false, "corrupt json" end
+    return self:Deserialize(data)
+end
+
+function Library:DeleteConfig(name)
+    local path = self.ConfigFolder .. "/" .. name .. ".json"
+    if delfile and isfile and isfile(path) then pcall(delfile, path) return true end
+    return false, "no such config"
+end
+
+function Library:CloseSettings()
+    local S = self._settings
+    if not S or not S.Visible then return end
+    self:ClosePopups()
+    tween(S, { Size = UDim2.fromOffset(S.Size.X.Offset, 0) }, 0.16, Enum.EasingStyle.Quad)
+    task.delay(0.17, function() if S then S.Visible = false end end)
+    self:ApplyBlur(self.Open, 0) -- drop back to the plain menu blur
+end
+
 function Library:OpenSettings()
-    if self._settings then
-        self._settings.Visible = not self._settings.Visible
+    local W, H = 720, 470
+    local S = self._settings
+    if S then
+        if S.Visible then return self:CloseSettings() end
+        S.Visible = true
+        S.Size = UDim2.fromOffset(W, 0)
+        S._openedAt = os.clock()
+        tween(S, { Size = UDim2.fromOffset(W, H) }, 0.2, Enum.EasingStyle.Back)
+        self:ApplyBlur(self.Open, 8)
         return
     end
-    local S = new("Frame", {
-        Name = "Settings", BackgroundColor3 = T.Panel, BorderSizePixel = 0,
-        Size = UDim2.fromOffset(342, 420), Position = UDim2.new(0.5, 0, 0.5, 0),
-        -- ZIndex 40: BELOW MakePopup's 51, because the colour picker and the menu-key
-        -- dropdown are siblings here -- at 60 they would open behind this panel. Still
-        -- draws over the tabs, since the parent popup layer is ZIndex 50 inside Main.
-        AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 40, Parent = self._popupLayer,
+
+    S = new("Frame", {
+        Name = "Settings", BackgroundColor3 = T.Body, BorderSizePixel = 0, Active = true,
+        Size = UDim2.fromOffset(W, 0), Position = UDim2.new(0.5, 0, 0.5, 0),
+        -- ZIndex 40: BELOW MakePopup's 51. The colour pickers and dropdowns inside are
+        -- siblings in the popup layer, so at 60 they would open behind this panel. It still
+        -- draws over the tabs because the popup layer itself is ZIndex 50 within Main.
+        AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 40, ClipsDescendants = true,
+        Parent = self._popupLayer,
     })
     corner(S, 12)
     new("UIStroke", { Color = Color3.fromRGB(48, 48, 48), Thickness = 1, Parent = S })
     self._settings = S
+    S._openedAt = os.clock()
+    conn(S.MouseEnter, function() S._hovering = true end)
+    conn(S.MouseLeave, function() S._hovering = false end)
 
-    new("TextLabel", { -- centred title, same as a section header
-        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20),
-        Position = UDim2.fromOffset(0, 6), Font = T.Font, TextSize = 16,
-        TextColor3 = T.Text, Text = "Settings", ZIndex = 61, Parent = S,
+    new("TextLabel", {
+        BackgroundTransparency = 1, Size = UDim2.fromOffset(200, 22), Position = UDim2.fromOffset(14, 8),
+        Font = T.FontBold, TextSize = 16, TextColor3 = T.Text,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Settings", ZIndex = 41, Parent = S,
     })
     local X = new("TextButton", {
-        BackgroundTransparency = 1, Position = UDim2.new(1, -28, 0, 6), Size = UDim2.fromOffset(20, 20),
+        BackgroundTransparency = 1, Position = UDim2.new(1, -30, 0, 8), Size = UDim2.fromOffset(22, 22),
         Font = T.FontBold, TextSize = 15, TextColor3 = T.Icon, Text = "X",
-        AutoButtonColor = false, ZIndex = 62, Parent = S,
+        AutoButtonColor = false, ZIndex = 41, Parent = S,
     })
-    conn(X.MouseButton1Click, function() S.Visible = false end)
+    conn(X.MouseButton1Click, function() Library:CloseSettings() end)
     conn(X.MouseEnter, function() tween(X, { TextColor3 = T.Text }, 0.1) end)
     conn(X.MouseLeave, function() tween(X, { TextColor3 = T.Icon }, 0.1) end)
 
-    local Body_ = new("ScrollingFrame", {
-        BackgroundTransparency = 1, BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 1, -36),
-        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        ScrollBarThickness = 2, ScrollBarImageColor3 = T.Scroll, ZIndex = 61, Parent = S,
-    })
-    new("UIListLayout", { Padding = UDim.new(0, 11), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Body_ })
+    -- three columns of groupboxes
+    local colW = (W - 16) / 3
+    local function col(i, title)
+        local holder = new("Frame", {
+            BackgroundTransparency = 1, Size = UDim2.fromOffset(colW, H - 44),
+            Position = UDim2.fromOffset(8 + (i - 1) * colW, 36), ZIndex = 41, Parent = S,
+        })
+        return settingsGroup(holder, title)
+    end
 
-    local Sec = buildSection(Body_)
-
-    Sec:AddDropdown("_MenuKey", { Text = "Menu key", Default = self.ToggleKey.Name,
-        Values = { "Insert", "Delete", "End", "Home", "RightShift", "RightControl", "F1", "F4" },
+    -- ── Menu
+    local Sec1 = buildSection(col(1, "Menu"))
+    Sec1:AddKeybind("_MenuKey", { Text = "Menu key", Default = self.ToggleKey.Name,
         Tooltip = "Key that opens and closes this menu.",
-        Callback = function(v) Library.ToggleKey = Enum.KeyCode[v] end })
-
-    Sec:AddColorPicker("_Accent", { Text = "Accent colour", Default = T.Accent,
-        Tooltip = "Repaints every accent element live.",
-        Callback = function(c) Library:SetAccent(c) end })
-
-    Sec:AddSlider("_UIScale", { Text = "UI scale", Min = 60, Max = 140, Default = 100,
-        Rounding = 0, Format = "%d", Suffix = "%",
-        Tooltip = "Scales the whole window.",
+        Callback = function(k) Library.ToggleKey = Enum.KeyCode[k] or Library.ToggleKey end })
+    Sec1:AddSlider("_UIScale", { Text = "UI scale", Min = 60, Max = 140, Default = 100,
+        Rounding = 0, Format = "%d", Suffix = "%", Tooltip = "Scales the whole window.",
         Callback = function(v)
             self._uiScale = self._uiScale or new("UIScale", { Scale = 1, Parent = self._main })
             self._uiScale.Scale = v / 100
         end })
-
-    Sec:AddSlider("_IconSize", { Text = "Icon size", Min = 18, Max = 40, Default = self.IconSize,
-        Rounding = 0, Format = "%d",
-        Tooltip = "Size of the sidebar tab icons.",
+    Sec1:AddSlider("_IconSize", { Text = "Icon size", Min = 18, Max = 40, Default = self.IconSize,
+        Rounding = 0, Format = "%d", Tooltip = "Size of the sidebar tab icons.",
         Callback = function(v)
             self.IconSize = v
             for _, t in ipairs(self._window and self._window.Tabs or {}) do
@@ -458,24 +636,63 @@ function Library:OpenSettings()
                 end
             end
         end })
-
-    Sec:AddToggle("_Watermark", { Text = "Watermark", Keybind = false,
+    Sec1:AddSlider("_Glow", { Text = "Tab glow", Min = 0, Max = 100,
+        Default = math.floor((1 - self.GlowIntensity) * 100), Rounding = 0, Format = "%d", Suffix = "%",
+        Tooltip = "Strength of the selected tab's halo.",
+        Callback = function(v)
+            self.GlowIntensity = 1 - v / 100
+            local cur = self._window and self._window._current
+            if cur and cur._glow then cur._glow.ImageTransparency = self.GlowIntensity end
+        end })
+    Sec1:AddToggle("_Watermark", { Text = "Watermark", Keybind = false,
         Default = self._watermark and self._watermark.Visible or false,
         Tooltip = "Title, fps, ping and clock. Stays up when the menu is closed.",
         Callback = function(v) Library:SetWatermark(v) end })
-
-    Sec:AddToggle("_KeybindList", { Text = "Keybind list", Keybind = false,
+    Sec1:AddToggle("_KeybindList", { Text = "Keybind list", Keybind = false,
         Default = self._kbList and self._kbList.Visible or false,
         Tooltip = "On-screen list of every bound key.",
         Callback = function(v) Library:SetKeybindList(v) end })
-
-    Sec:AddToggle("_Tooltips", { Text = "Tooltips", Keybind = false, Default = self.TooltipsOn ~= false,
+    Sec1:AddToggle("_Tooltips", { Text = "Tooltips", Keybind = false, Default = self.TooltipsOn ~= false,
         Tooltip = "These little hover boxes.",
         Callback = function(v) Library.TooltipsOn = v end })
-
-    Sec:AddButton("Unload menu", function() Library:Unload() end,
+    Sec1:AddButton("Unload menu", function() Library:Unload() end,
         "Destroys the menu. Re-execute the script to get it back.")
+
+    -- ── Colours: every theme token, not just the accent
+    local Sec2 = buildSection(col(2, "Colours"))
+    local TOKENS = {
+        { "Accent", "Accent" }, { "AccentDim", "Accent dim" }, { "Scroll", "Scrollbar" },
+        { "Body", "Background" }, { "Sidebar", "Sidebar" }, { "Panel", "Panel" },
+        { "Element", "Element" }, { "Hover", "Hover" },
+        { "Text", "Text" }, { "TextDim", "Text dim" }, { "Icon", "Icons" },
+    }
+    for _, tk in ipairs(TOKENS) do
+        local key, label = tk[1], tk[2]
+        Sec2:AddColorPicker("_C_" .. key, { Text = label, Default = T[key],
+            Callback = function(c) Library:SetThemeColor(key, c) end })
+    end
+
+    -- ── Background blur
+    local Sec3 = buildSection(col(3, "Background"))
+    local function reblur() Library:ApplyBlur(Library.Open, S.Visible and 8 or 0) end
+    Sec3:AddToggle("_BlurOn", { Text = "Blur", Keybind = false, Default = self.Blur.Enabled,
+        Tooltip = "Blurs the world behind the menu.",
+        Callback = function(v) self.Blur.Enabled = v reblur() end })
+    Sec3:AddSlider("_BlurSize", { Text = "Blur amount", Min = 0, Max = 40, Default = self.Blur.Size,
+        Rounding = 0, Format = "%d", Tooltip = "How strong the background blur is.",
+        Callback = function(v) self.Blur.Size = v reblur() end })
+    Sec3:AddSlider("_BlurAlpha", { Text = "Tint opacity", Min = 0, Max = 100,
+        Default = math.floor(self.Blur.Alpha * 100), Rounding = 0, Format = "%d", Suffix = "%",
+        Tooltip = "How heavily the tint colour washes the background.",
+        Callback = function(v) self.Blur.Alpha = v / 100 reblur() end })
+    Sec3:AddColorPicker("_BlurTint", { Text = "Tint colour", Default = self.Blur.Tint,
+        Tooltip = "Colour washed over the world behind the menu.",
+        Callback = function(c) self.Blur.Tint = c reblur() end })
+
+    tween(S, { Size = UDim2.fromOffset(W, H) }, 0.2, Enum.EasingStyle.Back)
+    self:ApplyBlur(self.Open, 8)
 end
+
 
 function Library:Notify(text, duration)
     local holder = self._notify
@@ -524,8 +741,10 @@ buildSection = function(Body_)
             })
             corner(Box, 5)
             local Fill = new("Frame", { -- checked = 19x19 #0596ff, inset +2
+                -- fromScale(0.5,0.5), not fromOffset(11,11): the box is 23 wide so its true
+                -- centre is 11.5, and that half-pixel error read as an off-centre fill.
                 BackgroundColor3 = T.Accent, Size = UDim2.fromOffset(0, 0),
-                Position = UDim2.fromOffset(11, 11), AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
                 BorderSizePixel = 0, Parent = Box,
             })
             corner(Fill, 4)
@@ -724,7 +943,7 @@ buildSection = function(Body_)
             S.SetValue = function(_, v, s) set(v, s) end
             S.GetValue = function() return S.Value end
 
-            local dragging = false
+            local dragging, hovering = false, false
             local function fromX(x)
                 local a = math.clamp((x - Box.AbsolutePosition.X) / math.max(Box.AbsoluteSize.X, 1), 0, 1)
                 set(min + (max - min) * a)
@@ -744,8 +963,20 @@ buildSection = function(Body_)
                     dragging = false
                 end
             end)
-            conn(Box.MouseEnter, function() tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
-            conn(Box.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
+            conn(Box.MouseEnter, function() hovering = true tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
+            conn(Box.MouseLeave, function() hovering = false tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
+            -- scroll wheel steps the value while hovered. Step is o.Step, else 1/50th of the
+            -- range snapped to the slider's own rounding, so an int slider moves whole units.
+            conn(Box.InputChanged, function(i)
+                if not hovering or i.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+                local step = o.Step
+                if not step then
+                    step = (max - min) / 50
+                    local m = 10 ^ (o.Rounding or 2)
+                    step = math.max(math.floor(step * m + 0.5) / m, 1 / m)
+                end
+                set(S.Value + i.Position.Z * step)
+            end)
 
             set(S.Value, true)
             Library:AttachTooltip(R, o.Tooltip)
@@ -905,6 +1136,64 @@ buildSection = function(Body_)
             conn(Btn.MouseButton1Click, function() if cb then task.spawn(cb) end end)
             Library:AttachTooltip(Btn, tip)
             return Btn
+        end
+
+        -- KEYBIND — a standalone bind row. The toggle's keybind glyph only exists welded to
+        -- a toggle, so there was no way to bind anything else. Same 301x34 element as a
+        -- dropdown: label left, key right, click to listen.
+        function Section:AddKeybind(flag, o)
+            o = o or {}
+            local K = { Value = o.Default or "None", Type = "Keybind" }
+            local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
+            local Box = new("TextButton", {
+                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
+                Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
+                BorderSizePixel = 0, Parent = R,
+            })
+            corner(Box, 6)
+            new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 0),
+                Size = UDim2.new(1, -120, 1, 0), Font = T.FontBold, TextSize = T.TextSize,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = o.Text or flag, Parent = Box,
+            })
+            local KeyTxt = new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.new(1, -110, 0, 0),
+                Size = UDim2.fromOffset(100, 34), Font = T.Font, TextSize = T.TextSize,
+                TextColor3 = T.Icon, TextXAlignment = Enum.TextXAlignment.Right,
+                Text = tostring(K.Value), Parent = Box,
+            })
+            new("Frame", {
+                BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
+                Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Box,
+            })
+            local listening = false
+            function K:SetValue(k, silent)
+                self.Value = k
+                Library.Flags[flag] = k
+                KeyTxt.Text = tostring(k)
+                KeyTxt.TextColor3 = (k ~= "None") and T.Accent or T.Icon
+                if not silent and o.Callback then task.spawn(o.Callback, k) end
+            end
+            function K:GetValue() return self.Value end
+            conn(Box.MouseButton1Click, function()
+                listening = true
+                Library._rebinding = true -- stop the menu's own toggle key firing mid-bind
+                KeyTxt.Text = "press a key..."
+                KeyTxt.TextColor3 = T.Accent
+            end)
+            conn(UserInputService.InputBegan, function(i)
+                if not listening or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                listening = false
+                Library._rebinding = false
+                K:SetValue(i.KeyCode == Enum.KeyCode.Backspace and "None" or i.KeyCode.Name)
+            end)
+            conn(Box.MouseEnter, function() tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
+            conn(Box.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
+            K:SetValue(K.Value, true)
+            Library:AttachTooltip(R, o.Tooltip)
+            Library.Options[flag] = K
+            return K
         end
 
         -- COLOR PICKER — swatch on the row, click it for an HSV panel.
@@ -1094,6 +1383,44 @@ buildSection = function(Body_)
             return CP
         end
 
+        -- CONFIGS — drop a whole save/load UI into any section with one call. Lives in a
+        -- TAB rather than the settings modal, so configs are a first-class feature.
+        function Section:AddConfigManager()
+            local list = Section:AddDropdown("ConfigList", { Text = "Config",
+                Values = Library:GetConfigList(), Default = nil,
+                Tooltip = "Saved configs in the executor's " .. Library.ConfigFolder .. " folder." })
+            local nameBox = Section:AddTextbox("ConfigName", { Text = "Name", Placeholder = "my config" })
+            local function refresh()
+                local names = Library:GetConfigList()
+                list:SetValues(names)
+                return names
+            end
+            Section:AddButton("Save", function()
+                local n = Library.Flags.ConfigName
+                if not n or n == "" then return Library:Notify("Type a name first") end
+                local ok, err = Library:SaveConfig(n)
+                refresh()
+                Library:Notify(ok and ("Saved " .. n) or ("Save failed: " .. tostring(err)))
+            end, "Writes every control value, the theme and the blur to a .json file.")
+            Section:AddButton("Load", function()
+                local n = Library.Flags.ConfigList
+                if not n then return Library:Notify("Pick a config first") end
+                local ok, err = Library:LoadConfig(n)
+                Library:Notify(ok and ("Loaded " .. n) or ("Load failed: " .. tostring(err)))
+            end, "Applies the selected config to every control.")
+            Section:AddButton("Delete", function()
+                local n = Library.Flags.ConfigList
+                if not n then return Library:Notify("Pick a config first") end
+                Library:DeleteConfig(n)
+                refresh()
+                Library:Notify("Deleted " .. n)
+            end, "Removes the selected config file. Not undoable.")
+            Section:AddButton("Refresh list", function()
+                Library:Notify(#refresh() .. " config(s)")
+            end)
+            return { Refresh = refresh }
+        end
+
         function Section:AddLabel(text)
             local L = new("TextLabel", {
                 BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 18),
@@ -1248,6 +1575,19 @@ function Library:CreateWindow(opts)
                     if p.frame and p.frame.Visible and not p.hovering
                         and os.clock() - (p.openedAt or 0) > 0.1 then p.close() end
                 end
+                -- clicking outside the settings modal closes it too. Skip while a popup is
+                -- hovered (its picker sits over the panel) and during the open frame.
+                -- Hover flag, not coordinates: GetMouseLocation() includes the topbar inset
+                -- while AbsolutePosition does not, so comparing them is 36px wrong.
+                local S = Library._settings
+                if S and S.Visible and not S._hovering
+                    and os.clock() - (S._openedAt or 0) > 0.15 then
+                    local onPopup = false
+                    for _, pp in ipairs(Library._popups) do
+                        if pp.frame and pp.frame.Visible and pp.hovering then onPopup = true break end
+                    end
+                    if not onPopup then Library:CloseSettings() end
+                end
             end)
         end
     end)
@@ -1323,7 +1663,7 @@ function Library:CreateWindow(opts)
             -- Figma only recolours the selected glyph -- it never scales it, and the halo
             -- sits at a fixed radius. Growing/blooming both was the "not like the original".
             tween(Ico, { ImageColor3 = T.Accent }, 0.18)
-            tween(Glow, { ImageTransparency = 0.55 }, 0.28)
+            tween(Glow, { ImageTransparency = Library.GlowIntensity }, 0.28)
             Window._current = Tab
             Library:SetCrumb(Window._title == name and name or (Window._root or "World"), name)
             Page.Position = UDim2.fromOffset(0, 8)
@@ -1405,6 +1745,11 @@ function Library:SetCrumb(root, leaf)
 end
 
 function Library:Unload()
+    -- Kill the blur FIRST. It lives in Lighting, OUTSIDE our ScreenGuis, so destroying the
+    -- guis alone would leave the player's screen blurred for the rest of the session with
+    -- no menu left to switch it off.
+    if self._blurFx then pcall(function() self._blurFx:Destroy() end) end
+    if self._tintGui then pcall(function() self._tintGui:Destroy() end) end
     if self._main then
         tween(self._main, { Size = UDim2.fromOffset(0, 0) }, 0.22)
         task.wait(0.24)
@@ -1417,6 +1762,7 @@ function Library:Unload()
     self._watermark, self._wmLabel, self._kbList, self._kbRows = nil, nil, nil, nil
     self._tip, self._tipLabel = nil, nil
     self._settings, self._uiScale, self._window, self._hudGui = nil, nil, nil, nil
+    self._blurFx, self._tintGui, self._tint = nil, nil, nil
     self._popups, self._icons = {}, {}
 end
 

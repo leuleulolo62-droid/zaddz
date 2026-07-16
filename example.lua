@@ -11,7 +11,7 @@ local World = Window:AddTab("Local Player", "globe", { Default = true })
 local Vis   = Window:AddTab("Visuals",      "eye")
 local Weap  = Window:AddTab("Weapons",      "pistol")
 local Veh   = Window:AddTab("Vehicles",     "car")
-local Misc  = Window:AddTab("Misc",         "grid")
+local Cfg   = Window:AddTab("Configs",      "grid")
 
 -- ─────────────────────────── LOCAL PLAYER (the Figma screen)
 local C = World:AddSection("Conditions", "Left")
@@ -115,20 +115,26 @@ Ve2:AddDropdown("VehModel", { Text = "Model", Values = { "Sultan", "Adder", "Pol
 Ve2:AddColorPicker("VehColor", { Text = "Paint", Default = Color3.fromRGB(30, 30, 30) })
 Ve2:AddButton("Spawn Vehicle", function() Library:Notify("Spawned " .. tostring(Library.Flags.VehModel)) end)
 
--- ─────────────────────────── MISC / SETTINGS
-local M1 = Misc:AddSection("Settings", "Left")
-M1:AddToggle("Watermark", { Text = "Watermark", Default = true,
-    Callback = function(v) Library:SetWatermark(v) end })
-M1:AddToggle("Keybinds", { Text = "Keybind List", Key = "K",
-    Callback = function(v) Library:SetKeybindList(v) end })
-M1:AddColorPicker("Accent", { Text = "Menu Accent", Default = Color3.fromRGB(5, 150, 255),
-    Callback = function(c) Library:SetAccent(c) end })
-M1:AddDropdown("MenuKey", { Text = "Menu Key", Values = { "Insert", "RightShift", "RightControl", "F4" }, Default = "Insert",
-    Callback = function(v) Library.ToggleKey = Enum.KeyCode[v] end })
-local M2 = Misc:AddSection("Config", "Right")
-M2:AddTextbox("ConfigName", { Text = "Config Name", Placeholder = "default" })
-M2:AddButton("Save Config", function() Library:Notify("Saved " .. tostring(Library.Flags.ConfigName)) end)
-M2:AddButton("Load Config", function() Library:Notify("Loaded") end)
+-- ─────────────────────────── CONFIGS / THEME SAVE
+-- Everything menu-appearance-related now lives in the gear (Settings). This tab is purely
+-- save/load: AddConfigManager() drops in the dropdown, name box and Save/Load/Delete.
+local M1 = Cfg:AddSection("Configs", "Left")
+M1:AddConfigManager()
+
+local M2 = Cfg:AddSection("Theme", "Right")
+M2:AddLabel("Colours, blur and the menu key live under the gear (top right). Save them here.")
+M2:AddButton("Open settings", function() Library:OpenSettings() end, "Same as clicking the gear.")
+M2:AddButton("Reset theme", function()
+    for k, c in pairs({
+        Accent = Color3.fromRGB(5, 150, 255), AccentDim = Color3.fromRGB(69, 131, 217),
+        Scroll = Color3.fromRGB(65, 109, 188), Body = Color3.fromRGB(19, 19, 19),
+        Sidebar = Color3.fromRGB(16, 16, 16), Panel = Color3.fromRGB(30, 30, 30),
+        Element = Color3.fromRGB(40, 40, 40), Hover = Color3.fromRGB(52, 52, 52),
+        Text = Color3.fromRGB(255, 255, 255), TextDim = Color3.fromRGB(138, 138, 138),
+        Icon = Color3.fromRGB(170, 170, 170),
+    }) do Library:SetThemeColor(k, c) end
+    Library:Notify("Theme reset")
+end, "Puts every colour back to the susano default.")
 M2:AddButton("Unload", function() Library:Unload() end, "Destroys the menu. Re-execute the script to get it back.")
 
 -- Defaults are applied silently (no callback), so drive the initial HUD state directly.
