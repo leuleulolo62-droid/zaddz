@@ -214,28 +214,19 @@ function Library:CreateWindow(opts)
         Position = UDim2.fromOffset(62, 0), BorderSizePixel = 0, Parent = Sidebar,
     })
 
-    -- Logo: centred on the Figma vector's centre (12+23, 15+19.5). The PNG is trimmed to
-    -- its real 283x296 aspect, so it's drawn 44x46 with Fit -- no squashing.
-    local LogoHalo = new("ImageLabel", { -- soft white bloom behind the S
-        BackgroundTransparency = 1, Image = Library:LoadIcon("glow"),
-        ImageColor3 = Color3.fromRGB(255, 255, 255), ImageTransparency = 0.62,
-        Size = UDim2.fromOffset(86, 86), Position = UDim2.fromOffset(35 - 43, 35 - 43),
-        ScaleType = Enum.ScaleType.Fit, ZIndex = 1, Parent = Sidebar,
-    })
+    -- Logo. logo.png is the Figma vector rendered WITH its glow effect already baked in
+    -- (406x378 for a 46x39 node -> ~8.8x of pure halo). So: no extra halo layer and no
+    -- breathing — stacking another glow on top is what made it flash. Just draw the PNG
+    -- once, centred on the vector's centre (12+23, 15+19.5), at its trimmed 283:296 aspect.
     new("ImageLabel", {
         BackgroundTransparency = 1, Image = Library:LoadIcon("logo"),
         ImageColor3 = Color3.fromRGB(255, 255, 255), ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromOffset(44, 46), Position = UDim2.fromOffset(35 - 22, 35 - 23),
+        -- The 283x296 PNG is glyph + halo. Its solid core measures 181x154 at (50,55),
+        -- so 45.5/181 = 0.2514 scale puts the S at Figma's real 45.5x38.6, centred on
+        -- (34.8, 34.3). Drawing the whole PNG at 46px shrank the S to nothing.
+        Size = UDim2.fromOffset(71, 74), Position = UDim2.fromOffset(0, 1),
         ZIndex = 2, Parent = Sidebar,
     })
-    task.spawn(function() -- slow logo breathe
-        while ScreenGui.Parent do
-            tween(LogoHalo, { ImageTransparency = 0.42 }, 1.4, Enum.EasingStyle.Sine)
-            task.wait(1.4)
-            tween(LogoHalo, { ImageTransparency = 0.72 }, 1.4, Enum.EasingStyle.Sine)
-            task.wait(1.4)
-        end
-    end)
 
     -- breadcrumb: "World > " white + "Local Player" accent (Figma @104,30)
     local Crumb = new("TextLabel", {
@@ -314,33 +305,57 @@ function Library:CreateWindow(opts)
 
     local Window = { Tabs = {}, _title = title, _current = nil }
 
-    -- sidebar icon rail: Figma y = 101,158,214,264,298,351,405 (uneven -> use a table)
-    local RAIL_Y = { 101, 158, 214, 264, 298, 351, 405, 459 }
+    -- Sidebar rail, measured off Figma node 1:3. The icons are NOT evenly spaced and are
+    -- NOT the same size, so both come from the table -- a single pitch/size is what made
+    -- the eye->pistol gap collapse to 34px and crushed the 42px pistol into a 26px box.
+    -- y is the node top; centres land at 115.5/172/225/275.5/319/365.5/418.5.
+    local RAIL = {
+        { x = 20, y = 101, w = 32, h = 29 }, -- star
+        { x = 25, y = 158, w = 28, h = 28 }, -- wifi
+        { x = 29, y = 214, w = 22, h = 22 }, -- globe
+        { x = 28, y = 264, w = 23, h = 23 }, -- eye
+        { x = 18, y = 298, w = 42, h = 42 }, -- pistol
+        { x = 24, y = 351, w = 29, h = 29 }, -- car
+        { x = 24, y = 405, w = 27, h = 27 }, -- grid
+    }
+    local function railSlot(idx)
+        local s = RAIL[idx]
+        if s then return s end
+        local last = RAIL[#RAIL] -- extra tabs continue on the design's mean pitch
+        return { x = 24, y = last.y + (idx - #RAIL) * 53, w = 27, h = 27 }
+    end
+    -- Figma's selected-tab glow is a DROP_SHADOW: colour #387BDB, radius 15.3, offset 0.
+    -- It is dimmer than the glyph accent and only spreads ~13px -- not a 58px accent bloom.
+    local GLOW_COLOR, GLOW_PAD = Color3.fromRGB(56, 123, 219), 26
 
     function Window:AddTab(name, icon, tabOpts)
         tabOpts = tabOpts or {}
         local idx = #Window.Tabs + 1
         local Tab = { Name = name, _window = Window }
 
-        local y = RAIL_Y[idx] or (101 + (idx - 1) * 54)
-        local Btn = new("TextButton", {
+        local slot = railSlot(idx)
+        local cx, cy = slot.x + slot.w / 2, slot.y + slot.h / 2
+        local Btn = new("TextButton", { -- invisible hit area, centred on the glyph
             BackgroundTransparency = 1, Size = UDim2.fromOffset(46, 46),
-            Position = UDim2.fromOffset(13, y - 8), Text = "", AutoButtonColor = false, Parent = Sidebar,
+            Position = UDim2.fromOffset(math.floor(cx - 23), math.floor(cy - 23)),
+            Text = "", AutoButtonColor = false, Parent = Sidebar,
         })
+        local gw, gh = slot.w + GLOW_PAD, slot.h + GLOW_PAD
         -- Real radial bloom (glow.png), NOT a scaled copy of the icon -- a tinted enlarged
         -- glyph just reads as a big blurry duplicate, which is what the last build did.
         local Glow = new("ImageLabel", {
             BackgroundTransparency = 1, Image = Library:LoadIcon("glow"),
-            ImageColor3 = T.Accent, ImageTransparency = 1,
-            Size = UDim2.fromOffset(44, 44), Position = UDim2.new(0.5, -22, 0.5, -22),
+            ImageColor3 = GLOW_COLOR, ImageTransparency = 1,
+            Size = UDim2.fromOffset(gw, gh), Position = UDim2.new(0.5, -gw / 2, 0.5, -gh / 2),
             ScaleType = Enum.ScaleType.Fit, ZIndex = 1, Parent = Btn,
         })
-        -- ScaleType.Fit letterboxes inside the box, preserving each glyph's real aspect.
-        -- Without it the 140x86 pistol / 470x333 wifi get crushed into squares.
+        -- Each glyph gets its own Figma node size; Fit keeps the real aspect, so the
+        -- 140x86 pistol letterboxes to 42x26 instead of being squashed into a square.
         local Ico = new("ImageLabel", {
             BackgroundTransparency = 1, Image = icon and Library:LoadIcon(icon) or "",
             ImageColor3 = T.Icon, ScaleType = Enum.ScaleType.Fit,
-            Size = UDim2.fromOffset(26, 26), Position = UDim2.new(0.5, -13, 0.5, -13),
+            Size = UDim2.fromOffset(slot.w, slot.h),
+            Position = UDim2.new(0.5, -slot.w / 2, 0.5, -slot.h / 2),
             ZIndex = 2, Parent = Btn,
         })
         if not icon then
@@ -358,12 +373,14 @@ function Library:CreateWindow(opts)
         function Tab:Select()
             for _, t in ipairs(Window.Tabs) do
                 t._page.Visible = false
-                tween(t._ico, { ImageColor3 = T.Icon, Size = UDim2.fromOffset(26, 26) }, 0.16)
-                tween(t._glow, { ImageTransparency = 1, Size = UDim2.fromOffset(44, 44) }, 0.16)
+                tween(t._ico, { ImageColor3 = T.Icon }, 0.16)
+                tween(t._glow, { ImageTransparency = 1 }, 0.16)
             end
             Page.Visible = true
-            tween(Ico, { ImageColor3 = T.Accent, Size = UDim2.fromOffset(28, 28) }, 0.18)
-            tween(Glow, { ImageTransparency = 0.45, Size = UDim2.fromOffset(58, 58) }, 0.28)
+            -- Figma only recolours the selected glyph -- it never scales it, and the halo
+            -- sits at a fixed radius. Growing/blooming both was the "not like the original".
+            tween(Ico, { ImageColor3 = T.Accent }, 0.18)
+            tween(Glow, { ImageTransparency = 0.55 }, 0.28)
             Window._current = Tab
             Library:SetCrumb(Window._title == name and name or (Window._root or "World"), name)
             Page.Position = UDim2.fromOffset(0, 8)
