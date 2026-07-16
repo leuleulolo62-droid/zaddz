@@ -87,10 +87,10 @@ function Library:LoadIcon(name)
         -- icons were re-trimmed after the first release, and the stale padded copies then
         -- drew at the new ink-tight sizes -- i.e. shrunk twice. Bump IconVersion whenever
         -- icons/ changes; the new folder simply misses and re-downloads.
-        local dir = "zaddz_icons_" .. Library.IconVersion
+        local dir = Library.Root .. "/icons/" .. Library.IconVersion
         local path = dir .. "/" .. name .. ".png"
         if not (isfile and isfile(path)) then
-            if makefolder and not (isfolder and isfolder(dir)) then makefolder(dir) end
+            Library._ensureDir(dir)
             local data = game:HttpGet(self.IconBase .. name .. ".png", true)
             writefile(path, data)
         end
@@ -446,14 +446,34 @@ local function settingsGroup(parent, title)
         AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
         ScrollBarImageColor3 = T.Scroll, ZIndex = 42, Parent = P,
     })
-    new("UIListLayout", { Padding = UDim.new(0, 9), SortOrder = Enum.SortOrder.LayoutOrder, Parent = body })
+    new("UIListLayout", { Padding = UDim.new(0, 9), SortOrder = Enum.SortOrder.LayoutOrder,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = body })
     return body
 end
 
 -- CONFIGS — flags + theme + keybinds serialised to JSON in the executor workspace.
 -- Color3 can't survive JSONEncode, so colours are stored as {r,g,b} 0-255 triplets.
 local HttpService = game:GetService("HttpService")
-Library.ConfigFolder = "zaddz_configs"
+-- Workspace layout. Configs are per-place: the same flag names mean different things in
+-- different games, so one shared folder would hand a Site-43 config to a racing game.
+--   zaddz/
+--     icons/v2/            <- icon cache, versioned (see IconVersion)
+--     configs/<placeId>/   <- one folder per game
+--       <name>.json
+Library.Root = "zaddz"
+function Library:ConfigDir() return self.Root .. "/configs/" .. tostring(game.PlaceId) end
+
+-- makefolder isn't reliably recursive across executors, so build each level.
+local function ensureDir(path)
+    if not (makefolder and isfolder) then return false end
+    local acc = nil
+    for part in path:gmatch("[^/]+") do
+        acc = acc and (acc .. "/" .. part) or part
+        if not isfolder(acc) then pcall(makefolder, acc) end
+    end
+    return isfolder(path)
+end
+Library._ensureDir = ensureDir
 
 local function packColor(c)
     return { math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5) }
@@ -465,8 +485,9 @@ end
 
 function Library:GetConfigList()
     local out = {}
-    if not (isfolder and listfiles and isfolder(self.ConfigFolder)) then return out end
-    local ok, files = pcall(listfiles, self.ConfigFolder)
+    local dir = self:ConfigDir()
+    if not (isfolder and listfiles and isfolder(dir)) then return out end
+    local ok, files = pcall(listfiles, dir)
     if not ok then return out end
     for _, f in ipairs(files) do
         local name = f:match("([^/\\]+)%.json$")
@@ -521,23 +542,32 @@ function Library:Deserialize(data)
             pcall(function() opt:SetValue(val) end)
         end
     end
+    -- Keybinds are stored as <flag>_Key / <flag>_Mode, which have no Options entry of their
+    -- own, so the loop above skips them and binds would never come back. Apply them through
+    -- the toggle's setters (the closure locals are what the input handler actually reads).
+    for flag, tg in pairs(self.Toggles) do
+        local k = (data.flags or {})[flag .. "_Key"]
+        local m = (data.flags or {})[flag .. "_Mode"]
+        if k and tg.SetKey then pcall(function() tg:SetKey(k) end) end
+        if m and tg.SetMode then pcall(function() tg:SetMode(m) end) end
+    end
     return true
 end
 
 function Library:SaveConfig(name)
     if not name or name == "" then return false, "name required" end
     if not writefile then return false, "executor has no writefile" end
-    if makefolder and not (isfolder and isfolder(self.ConfigFolder)) then makefolder(self.ConfigFolder) end
+    if not ensureDir(self:ConfigDir()) then return false, "cannot create " .. self:ConfigDir() end
     local ok, enc = pcall(function() return HttpService:JSONEncode(self:Serialize()) end)
     if not ok then return false, "encode failed" end
-    local ok2, err = pcall(writefile, self.ConfigFolder .. "/" .. name .. ".json", enc)
+    local ok2, err = pcall(writefile, self:ConfigDir() .. "/" .. name .. ".json", enc)
     if not ok2 then return false, tostring(err) end
     return true
 end
 
 function Library:LoadConfig(name)
     if not (readfile and isfile) then return false, "executor has no readfile" end
-    local path = self.ConfigFolder .. "/" .. name .. ".json"
+    local path = self:ConfigDir() .. "/" .. name .. ".json"
     if not isfile(path) then return false, "no such config" end
     local ok, raw = pcall(readfile, path)
     if not ok then return false, "read failed" end
@@ -547,7 +577,7 @@ function Library:LoadConfig(name)
 end
 
 function Library:DeleteConfig(name)
-    local path = self.ConfigFolder .. "/" .. name .. ".json"
+    local path = self:ConfigDir() .. "/" .. name .. ".json"
     if delfile and isfile and isfile(path) then pcall(delfile, path) return true end
     return false, "no such config"
 end
@@ -568,7 +598,7 @@ function Library:OpenSettings()
         if S.Visible then return self:CloseSettings() end
         S.Visible = true
         S.Size = UDim2.fromOffset(W, 0)
-        S._openedAt = os.clock()
+        self._settingsOpenedAt = os.clock()
         tween(S, { Size = UDim2.fromOffset(W, H) }, 0.2, Enum.EasingStyle.Back)
         self:ApplyBlur(self.Open, 8)
         return
@@ -586,9 +616,12 @@ function Library:OpenSettings()
     corner(S, 12)
     new("UIStroke", { Color = Color3.fromRGB(48, 48, 48), Thickness = 1, Parent = S })
     self._settings = S
-    S._openedAt = os.clock()
-    conn(S.MouseEnter, function() S._hovering = true end)
-    conn(S.MouseLeave, function() S._hovering = false end)
+    self._settingsOpenedAt = os.clock()
+    -- NB: state lives on the Library table, never on S -- assigning an unknown field to a
+    -- Roblox Instance throws ("_openedAt is not a valid member of Frame"), which is exactly
+    -- what killed OpenSettings on its first run.
+    conn(S.MouseEnter, function() self._settingsHover = true end)
+    conn(S.MouseLeave, function() self._settingsHover = false end)
 
     new("TextLabel", {
         BackgroundTransparency = 1, Size = UDim2.fromOffset(200, 22), Position = UDim2.fromOffset(14, 8),
@@ -760,7 +793,7 @@ buildSection = function(Body_)
                 KB = new("ImageButton", {
                     BackgroundTransparency = 1, Image = Library:LoadIcon("keybind"),
                     ImageColor3 = T.Icon, ScaleType = Enum.ScaleType.Fit,
-                    Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(300, 0), Parent = R,
+                    Size = UDim2.fromOffset(24, 24), Position = UDim2.new(1, -34, 0, 0), Parent = R,
                 })
             end
 
@@ -848,6 +881,17 @@ buildSection = function(Body_)
                     Library:RefreshKeybinds()
                 end
                 local MODES = { "Toggle", "Hold", "Always" }
+                -- Exposed so a loaded config can actually rebind. `key`/`mode` are closure
+                -- locals that drive the input handler; writing Tg.Key alone only moved a
+                -- mirror field and the bind silently stayed on the old key.
+                function Tg:SetKey(k) setKey(k or "None") end
+                function Tg:SetMode(m)
+                    if not table.find(MODES, m) then return end
+                    mode = m; Tg.Mode = m
+                    ModeTxt.Text = m
+                    Library.Flags[flag .. "_Mode"] = m
+                    Library:RefreshKeybinds()
+                end
                 conn(ModeBtn.MouseButton1Click, function()
                     local i = table.find(MODES, mode) or 1
                     mode = MODES[(i % #MODES) + 1]
@@ -908,8 +952,9 @@ buildSection = function(Body_)
             local S = { Value = o.Default or min, Type = "Slider" }
             local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
             local Box = new("Frame", {
-                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
-                Position = UDim2.fromOffset(20, 0), BorderSizePixel = 0, ClipsDescendants = true, Parent = R,
+                BackgroundColor3 = T.Element, Size = UDim2.new(1, -40, 0, 34),
+                Position = UDim2.new(0.5, 0, 0, 0), AnchorPoint = Vector2.new(0.5, 0),
+                BorderSizePixel = 0, ClipsDescendants = true, Parent = R,
             })
             corner(Box, 6)
             new("TextLabel", {
@@ -991,8 +1036,9 @@ buildSection = function(Body_)
             local D = { Value = o.Default or values[1], Type = "Dropdown", Open = false }
             local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
             local Box = new("TextButton", {
-                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
-                Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
+                BackgroundColor3 = T.Element, Size = UDim2.new(1, -40, 0, 34),
+                Position = UDim2.new(0.5, 0, 0, 0), AnchorPoint = Vector2.new(0.5, 0),
+                Text = "", AutoButtonColor = false,
                 BorderSizePixel = 0, Parent = R,
             })
             corner(Box, 6)
@@ -1088,8 +1134,9 @@ buildSection = function(Body_)
                 Text = o.Text or flag, Parent = R,
             })
             local Box = new("Frame", {
-                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 25),
-                Position = UDim2.fromOffset(20, 22), BorderSizePixel = 0, Parent = R,
+                BackgroundColor3 = T.Element, Size = UDim2.new(1, -40, 0, 25),
+                Position = UDim2.new(0.5, 0, 0, 22), AnchorPoint = Vector2.new(0.5, 0),
+                BorderSizePixel = 0, Parent = R,
             })
             corner(Box, 5)
             local Input = new("TextBox", {
@@ -1122,8 +1169,9 @@ buildSection = function(Body_)
 
         function Section:AddButton(text, cb, tip)
             local Btn = new("TextButton", {
-                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 30),
-                Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
+                BackgroundColor3 = T.Element, Size = UDim2.new(1, -40, 0, 30),
+                Position = UDim2.new(0.5, 0, 0, 0), AnchorPoint = Vector2.new(0.5, 0),
+                Text = "", AutoButtonColor = false,
                 BorderSizePixel = 0, Parent = Body_,
             })
             corner(Btn, 6)
@@ -1146,8 +1194,9 @@ buildSection = function(Body_)
             local K = { Value = o.Default or "None", Type = "Keybind" }
             local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
             local Box = new("TextButton", {
-                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
-                Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
+                BackgroundColor3 = T.Element, Size = UDim2.new(1, -40, 0, 34),
+                Position = UDim2.new(0.5, 0, 0, 0), AnchorPoint = Vector2.new(0.5, 0),
+                Text = "", AutoButtonColor = false,
                 BorderSizePixel = 0, Parent = R,
             })
             corner(Box, 6)
@@ -1212,8 +1261,11 @@ buildSection = function(Body_)
                 Text = o.Text or flag, Parent = R,
             })
             local Swatch = new("TextButton", {
+                -- Anchored to the row's right edge, not pinned at x=288. In a narrow
+                -- container (the settings columns) a fixed x puts the swatch off-panel --
+                -- which is exactly why every colour row rendered as a bare label.
                 BackgroundColor3 = CP.Value, Size = UDim2.fromOffset(34, 20),
-                Position = UDim2.fromOffset(288, 1), Text = "", AutoButtonColor = false,
+                Position = UDim2.new(1, -54, 0, 1), Text = "", AutoButtonColor = false,
                 BorderSizePixel = 0, Parent = R,
             })
             corner(Swatch, 5)
@@ -1388,7 +1440,7 @@ buildSection = function(Body_)
         function Section:AddConfigManager()
             local list = Section:AddDropdown("ConfigList", { Text = "Config",
                 Values = Library:GetConfigList(), Default = nil,
-                Tooltip = "Saved configs in the executor's " .. Library.ConfigFolder .. " folder." })
+                Tooltip = "Saved configs in " .. Library:ConfigDir() })
             local nameBox = Section:AddTextbox("ConfigName", { Text = "Name", Placeholder = "my config" })
             local function refresh()
                 local names = Library:GetConfigList()
@@ -1580,8 +1632,8 @@ function Library:CreateWindow(opts)
                 -- Hover flag, not coordinates: GetMouseLocation() includes the topbar inset
                 -- while AbsolutePosition does not, so comparing them is 36px wrong.
                 local S = Library._settings
-                if S and S.Visible and not S._hovering
-                    and os.clock() - (S._openedAt or 0) > 0.15 then
+                if S and S.Visible and not Library._settingsHover
+                    and os.clock() - (Library._settingsOpenedAt or 0) > 0.15 then
                     local onPopup = false
                     for _, pp in ipairs(Library._popups) do
                         if pp.frame and pp.frame.Visible and pp.hovering then onPopup = true break end
@@ -1706,7 +1758,11 @@ function Library:CreateWindow(opts)
                 ScrollBarThickness = 2, ScrollBarImageColor3 = T.Scroll,
                 ScrollBarImageTransparency = 0, Parent = Panel,
             })
-            new("UIListLayout", { Padding = UDim.new(0, right and 17 or 11), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Body_ })
+            -- Center: AddButton/AddLabel parent directly to Body_, and a UIListLayout
+            -- discards a child's own Position -- so they sat at x=0 while row-wrapped
+            -- controls centred. Rows are full-width, so centring them changes nothing.
+            new("UIListLayout", { Padding = UDim.new(0, right and 17 or 11), SortOrder = Enum.SortOrder.LayoutOrder,
+                HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = Body_ })
             Section._panel, Section._body = Panel, Body_
 
             local S2 = buildSection(Body_)
