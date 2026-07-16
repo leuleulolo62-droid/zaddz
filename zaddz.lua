@@ -337,6 +337,7 @@ end
 -- time (bookkeeping that rots the moment someone adds a widget), sweep the tree and swap
 -- whatever currently equals the old accent. The accent is a distinctive colour, so a
 -- false match is unlikely, and this stays correct for widgets added later.
+local buildSection -- fwd decl: defined below, but OpenSettings above needs the upvalue
 local ACCENT_PROPS = { "BackgroundColor3", "ImageColor3", "TextColor3", "Color" }
 function Library:SetAccent(c)
     local old = T.Accent
@@ -385,166 +386,95 @@ function Library:Toggle() self:SetOpen(not self.Open) end
 
 -- SETTINGS MODAL — opened by the gear. Hand-rolled rows rather than the Section builders,
 -- which are closures scoped inside AddTab and can't be reached from here.
-local ACCENT_SWATCHES = {
-    Color3.fromRGB(5, 150, 255), Color3.fromRGB(120, 90, 255), Color3.fromRGB(255, 60, 90),
-    Color3.fromRGB(60, 220, 120), Color3.fromRGB(255, 170, 0), Color3.fromRGB(235, 235, 235),
-}
+-- SETTINGS — built from the SAME buildSection() controls as the menu, so the toggles,
+-- sliders and dropdowns are pixel-identical to a real tab instead of look-alikes.
 function Library:OpenSettings()
-    local S = self._settings
-    if S then
-        S.Visible = not S.Visible
+    if self._settings then
+        self._settings.Visible = not self._settings.Visible
         return
     end
-    S = new("Frame", {
+    local S = new("Frame", {
         Name = "Settings", BackgroundColor3 = T.Panel, BorderSizePixel = 0,
-        Size = UDim2.fromOffset(320, 352), Position = UDim2.new(0.5, 0, 0.5, 0),
-        AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 60, Parent = self._popupLayer,
+        Size = UDim2.fromOffset(342, 420), Position = UDim2.new(0.5, 0, 0.5, 0),
+        -- ZIndex 40: BELOW MakePopup's 51, because the colour picker and the menu-key
+        -- dropdown are siblings here -- at 60 they would open behind this panel. Still
+        -- draws over the tabs, since the parent popup layer is ZIndex 50 inside Main.
+        AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 40, Parent = self._popupLayer,
     })
-    corner(S, 10)
+    corner(S, 12)
     new("UIStroke", { Color = Color3.fromRGB(48, 48, 48), Thickness = 1, Parent = S })
     self._settings = S
 
-    new("TextLabel", {
-        BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 10), Size = UDim2.fromOffset(200, 20),
-        Font = T.FontBold, TextSize = 15, TextColor3 = T.Text,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Settings", ZIndex = 61, Parent = S,
+    new("TextLabel", { -- centred title, same as a section header
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20),
+        Position = UDim2.fromOffset(0, 6), Font = T.Font, TextSize = 16,
+        TextColor3 = T.Text, Text = "Settings", ZIndex = 61, Parent = S,
     })
     local X = new("TextButton", {
-        BackgroundTransparency = 1, Position = UDim2.new(1, -30, 0, 8), Size = UDim2.fromOffset(22, 22),
-        Font = T.FontBold, TextSize = 16, TextColor3 = T.Icon, Text = "X",
-        AutoButtonColor = false, ZIndex = 61, Parent = S,
+        BackgroundTransparency = 1, Position = UDim2.new(1, -28, 0, 6), Size = UDim2.fromOffset(20, 20),
+        Font = T.FontBold, TextSize = 15, TextColor3 = T.Icon, Text = "X",
+        AutoButtonColor = false, ZIndex = 62, Parent = S,
     })
     conn(X.MouseButton1Click, function() S.Visible = false end)
     conn(X.MouseEnter, function() tween(X, { TextColor3 = T.Text }, 0.1) end)
     conn(X.MouseLeave, function() tween(X, { TextColor3 = T.Icon }, 0.1) end)
 
-    local rows = new("Frame", {
-        BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 40),
-        Size = UDim2.new(1, -28, 1, -50), ZIndex = 61, Parent = S,
+    local Body_ = new("ScrollingFrame", {
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 1, -36),
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollBarThickness = 2, ScrollBarImageColor3 = T.Scroll, ZIndex = 61, Parent = S,
     })
-    new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8), Parent = rows })
+    new("UIListLayout", { Padding = UDim.new(0, 11), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Body_ })
 
-    local order = 0
-    local function row(h)
-        order = order + 1
-        return new("Frame", { BackgroundTransparency = 1, LayoutOrder = order,
-            Size = UDim2.new(1, 0, 0, h), ZIndex = 61, Parent = rows })
-    end
-    local function label(p, txt, w)
-        return new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(w or 150, 22),
-            Font = T.Font, TextSize = 13, TextColor3 = T.TextDim,
-            TextXAlignment = Enum.TextXAlignment.Left, Text = txt, ZIndex = 62, Parent = p })
-    end
-    -- a compact on/off pill, since the Section toggle isn't reachable here
-    local function pill(p, on, cb)
-        local b = new("TextButton", { BackgroundColor3 = on and T.Accent or T.Element,
-            Size = UDim2.fromOffset(38, 20), Position = UDim2.new(1, -38, 0, 1), Text = "",
-            AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 62, Parent = p })
-        corner(b, 10)
-        local k = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(14, 14),
-            Position = UDim2.fromOffset(on and 21 or 3, 3), BorderSizePixel = 0, ZIndex = 63, Parent = b })
-        corner(k, 7)
-        local v = on
-        conn(b.MouseButton1Click, function()
-            v = not v
-            tween(b, { BackgroundColor3 = v and T.Accent or T.Element }, 0.16)
-            tween(k, { Position = UDim2.fromOffset(v and 21 or 3, 3) }, 0.18, Enum.EasingStyle.Back)
-            cb(v)
-        end)
-        return b
-    end
-    local function slider(p, min, max, val, cb)
-        local track = new("Frame", { BackgroundColor3 = T.Element, Size = UDim2.new(1, 0, 0, 6),
-            Position = UDim2.fromOffset(0, 26), BorderSizePixel = 0, ZIndex = 62, Parent = p })
-        corner(track, 3)
-        local fill = new("Frame", { BackgroundColor3 = T.Accent, BorderSizePixel = 0,
-            Size = UDim2.fromScale((val - min) / (max - min), 1), ZIndex = 63, Parent = track })
-        corner(fill, 3)
-        local vlab = new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromOffset(60, 22),
-            Position = UDim2.new(1, -60, 0, 0), Font = T.Font, TextSize = 13, TextColor3 = T.Text,
-            TextXAlignment = Enum.TextXAlignment.Right, Text = tostring(val), ZIndex = 62, Parent = p })
-        local drag = false
-        local function set(x)
-            local a = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-            local v = math.floor(min + a * (max - min) + 0.5)
-            fill.Size = UDim2.fromScale((v - min) / (max - min), 1)
-            vlab.Text = tostring(v)
-            cb(v)
-        end
-        conn(track.InputBegan, function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = true set(i.Position.X) end
-        end)
-        conn(UserInputService.InputChanged, function(i)
-            if drag and i.UserInputType == Enum.UserInputType.MouseMovement then set(i.Position.X) end
-        end)
-        conn(UserInputService.InputEnded, function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
-        end)
-    end
+    local Sec = buildSection(Body_)
 
-    -- menu key
-    local r = row(22); label(r, "Menu key")
-    local KeyB = new("TextButton", { BackgroundColor3 = T.Element, Size = UDim2.fromOffset(96, 22),
-        Position = UDim2.new(1, -96, 0, 0), Text = self.ToggleKey.Name, Font = T.Font, TextSize = 12,
-        TextColor3 = T.Text, AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 62, Parent = r })
-    corner(KeyB, 5)
-    local listening = false
-    conn(KeyB.MouseButton1Click, function()
-        listening = true; Library._rebinding = true
-        KeyB.Text = "press a key..."; KeyB.TextColor3 = T.Accent
-    end)
-    conn(UserInputService.InputBegan, function(i)
-        if listening and i.UserInputType == Enum.UserInputType.Keyboard then
-            listening = false; Library._rebinding = false
-            Library.ToggleKey = i.KeyCode
-            KeyB.Text = i.KeyCode.Name; KeyB.TextColor3 = T.Text
-        end
-    end)
+    Sec:AddDropdown("_MenuKey", { Text = "Menu key", Default = self.ToggleKey.Name,
+        Values = { "Insert", "Delete", "End", "Home", "RightShift", "RightControl", "F1", "F4" },
+        Tooltip = "Key that opens and closes this menu.",
+        Callback = function(v) Library.ToggleKey = Enum.KeyCode[v] end })
 
-    -- accent swatches
-    r = row(46); label(r, "Accent")
-    for idx, c in ipairs(ACCENT_SWATCHES) do
-        local sw = new("TextButton", { BackgroundColor3 = c, Size = UDim2.fromOffset(28, 20),
-            Position = UDim2.fromOffset((idx - 1) * 34, 24), Text = "", AutoButtonColor = false,
-            BorderSizePixel = 0, ZIndex = 62, Parent = r })
-        corner(sw, 5)
-        conn(sw.MouseButton1Click, function() Library:SetAccent(c) end)
-        conn(sw.MouseEnter, function() tween(sw, { Size = UDim2.fromOffset(28, 24) }, 0.12) end)
-        conn(sw.MouseLeave, function() tween(sw, { Size = UDim2.fromOffset(28, 20) }, 0.12) end)
-    end
+    Sec:AddColorPicker("_Accent", { Text = "Accent colour", Default = T.Accent,
+        Tooltip = "Repaints every accent element live.",
+        Callback = function(c) Library:SetAccent(c) end })
 
-    -- ui scale
-    r = row(36); label(r, "UI scale %")
-    local scale = self._uiScale or new("UIScale", { Scale = 1, Parent = self._main })
-    self._uiScale = scale
-    slider(r, 60, 140, math.floor(scale.Scale * 100 + 0.5), function(v) scale.Scale = v / 100 end)
+    Sec:AddSlider("_UIScale", { Text = "UI scale", Min = 60, Max = 140, Default = 100,
+        Rounding = 0, Format = "%d", Suffix = "%",
+        Tooltip = "Scales the whole window.",
+        Callback = function(v)
+            self._uiScale = self._uiScale or new("UIScale", { Scale = 1, Parent = self._main })
+            self._uiScale.Scale = v / 100
+        end })
 
-    -- icon size (live: rebuild is not needed, the rail reads Library.IconSize per tab)
-    r = row(36); label(r, "Icon size")
-    slider(r, 18, 40, self.IconSize, function(v)
-        self.IconSize = v
-        for _, t in ipairs(self._window and self._window.Tabs or {}) do
-            if t._ico then t._ico.Size = UDim2.fromOffset(v, v)
-                t._ico.Position = UDim2.new(0.5, -v / 2, 0.5, -v / 2) end
-        end
-    end)
+    Sec:AddSlider("_IconSize", { Text = "Icon size", Min = 18, Max = 40, Default = self.IconSize,
+        Rounding = 0, Format = "%d",
+        Tooltip = "Size of the sidebar tab icons.",
+        Callback = function(v)
+            self.IconSize = v
+            for _, t in ipairs(self._window and self._window.Tabs or {}) do
+                if t._ico then
+                    t._ico.Size = UDim2.fromOffset(v, v)
+                    t._ico.Position = UDim2.new(0.5, -v / 2, 0.5, -v / 2)
+                end
+            end
+        end })
 
-    r = row(22); label(r, "Watermark")
-    pill(r, self._watermark and self._watermark.Visible or false, function(v) Library:SetWatermark(v) end)
-    r = row(22); label(r, "Keybind list")
-    pill(r, self._kbList and self._kbList.Visible or false, function(v) Library:SetKeybindList(v) end)
-    r = row(22); label(r, "Tooltips")
-    pill(r, self.TooltipsOn ~= false, function(v) Library.TooltipsOn = v end)
+    Sec:AddToggle("_Watermark", { Text = "Watermark", Keybind = false,
+        Default = self._watermark and self._watermark.Visible or false,
+        Tooltip = "Title, fps, ping and clock. Stays up when the menu is closed.",
+        Callback = function(v) Library:SetWatermark(v) end })
 
-    r = row(30)
-    local UB = new("TextButton", { BackgroundColor3 = Color3.fromRGB(60, 26, 30),
-        Size = UDim2.new(1, 0, 0, 26), Text = "Unload menu", Font = T.FontBold, TextSize = 13,
-        TextColor3 = Color3.fromRGB(255, 110, 120), AutoButtonColor = false,
-        BorderSizePixel = 0, ZIndex = 62, Parent = r })
-    corner(UB, 6)
-    conn(UB.MouseButton1Click, function() Library:Unload() end)
-    conn(UB.MouseEnter, function() tween(UB, { BackgroundColor3 = Color3.fromRGB(90, 32, 38) }, 0.12) end)
-    conn(UB.MouseLeave, function() tween(UB, { BackgroundColor3 = Color3.fromRGB(60, 26, 30) }, 0.12) end)
+    Sec:AddToggle("_KeybindList", { Text = "Keybind list", Keybind = false,
+        Default = self._kbList and self._kbList.Visible or false,
+        Tooltip = "On-screen list of every bound key.",
+        Callback = function(v) Library:SetKeybindList(v) end })
+
+    Sec:AddToggle("_Tooltips", { Text = "Tooltips", Keybind = false, Default = self.TooltipsOn ~= false,
+        Tooltip = "These little hover boxes.",
+        Callback = function(v) Library.TooltipsOn = v end })
+
+    Sec:AddButton("Unload menu", function() Library:Unload() end,
+        "Destroys the menu. Re-execute the script to get it back.")
 end
 
 function Library:Notify(text, duration)
@@ -575,6 +505,608 @@ function Library:Notify(text, duration)
 end
 
 -- ------------------------------------------------------------------ window
+
+-- Every Section:Add* control, lifted out of Tab:AddSection. They only ever captured
+-- Body_, so hoisting them costs nothing and lets the settings panel build REAL menu
+-- controls instead of the hand-rolled pills/sliders it used to fake.
+buildSection = function(Body_)
+    local Section = {}
+        -- TOGGLE — Figma: box 23x23 @x115 (panel-rel 12), label @x150 (rel 47),
+        -- keybind glyph @x403 (rel 300), row pitch 34.
+        function Section:AddToggle(flag, o)
+            o = o or {}
+            local Tg = { Value = o.Default or false, Type = "Toggle" }
+            local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 23), Parent = Body_ })
+
+            local Box = new("Frame", {
+                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(23, 23),
+                Position = UDim2.fromOffset(12, 0), BorderSizePixel = 0, Parent = R,
+            })
+            corner(Box, 5)
+            local Fill = new("Frame", { -- checked = 19x19 #0596ff, inset +2
+                BackgroundColor3 = T.Accent, Size = UDim2.fromOffset(0, 0),
+                Position = UDim2.fromOffset(11, 11), AnchorPoint = Vector2.new(0.5, 0.5),
+                BorderSizePixel = 0, Parent = Box,
+            })
+            corner(Fill, 4)
+            local L = new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.fromOffset(47, 0),
+                Size = UDim2.new(1, -100, 1, 0), Font = T.Font, TextSize = T.TextSize,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = o.Text or flag, Parent = R,
+            })
+            -- keybind glyph on the right of every row
+            local KB
+            if o.Keybind ~= false then
+                KB = new("ImageButton", {
+                    BackgroundTransparency = 1, Image = Library:LoadIcon("keybind"),
+                    ImageColor3 = T.Icon, ScaleType = Enum.ScaleType.Fit,
+                    Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(300, 0), Parent = R,
+                })
+            end
+
+            local Hit = new("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, -40, 1, 0),
+                Text = "", AutoButtonColor = false, Parent = R })
+
+            Tg._text = o.Text or flag -- what the keybind list shows for this row
+            function Tg:SetValue(v, silent)
+                self.Value = v and true or false
+                Library.Flags[flag] = self.Value
+                -- Back easing OVERSHOOTS its target. Growing 0->19 that's a nice pop,
+                -- but shrinking 19->0 it overshoots negative, which renders as nothing --
+                -- the fill just blinked out and the un-toggle looked unanimated. So:
+                -- Back only on the way in, a soft Quint collapse on the way out, with
+                -- the fade riding along so it dissolves rather than snapping.
+                if self.Value then
+                    tween(Fill, { Size = UDim2.fromOffset(19, 19), BackgroundTransparency = 0 },
+                        0.22, Enum.EasingStyle.Back)
+                else
+                    tween(Fill, { Size = UDim2.fromOffset(4, 4), BackgroundTransparency = 1 },
+                        0.18, Enum.EasingStyle.Quint)
+                end
+                tween(Box, { BackgroundColor3 = self.Value and T.AccentDim or T.Element }, 0.18)
+                -- keep the keybind list's lit state honest, but only while it's shown
+                if Library._kbList and Library._kbList.Visible then Library:RefreshKeybinds() end
+                if not silent and o.Callback then task.spawn(o.Callback, self.Value) end
+            end
+            function Tg:GetValue() return self.Value end
+            conn(Hit.MouseButton1Click, function() Tg:SetValue(not Tg.Value) end)
+            conn(Hit.MouseEnter, function() tween(Box, { BackgroundColor3 = Tg.Value and T.Accent or T.Hover }, 0.12) end)
+            conn(Hit.MouseLeave, function() -- settle back to the state colour, not always Element
+                tween(Box, { BackgroundColor3 = Tg.Value and T.AccentDim or T.Element }, 0.12)
+            end)
+
+            -- Keybind PANEL: clicking the glyph spawns a popup (key + mode + clear)
+            -- rather than silently entering a listen state.
+            if KB then
+                local key, mode, binding = o.Key or "None", o.Mode or "Toggle", false
+                Tg.Key, Tg.Mode = key, mode
+
+                local P = Library:MakePopup(178, 96)
+                new("TextLabel", {
+                    BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 16), Font = T.FontBold,
+                    TextSize = 13, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                    Text = "Keybind", ZIndex = 53, Parent = P.body,
+                })
+                local KeyBtn = new("TextButton", {
+                    BackgroundColor3 = T.Element, Size = UDim2.new(1, 0, 0, 26),
+                    Position = UDim2.fromOffset(0, 20), Text = "", AutoButtonColor = false,
+                    BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                })
+                corner(KeyBtn, 5)
+                local KeyTxt = new("TextLabel", {
+                    BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Font = T.Font,
+                    TextSize = 13, TextColor3 = T.Text, Text = key, ZIndex = 54, Parent = KeyBtn,
+                })
+                new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
+                    Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, ZIndex = 54, Parent = KeyBtn })
+
+                -- mode cycles Toggle -> Hold -> Always
+                local ModeBtn = new("TextButton", {
+                    BackgroundColor3 = T.Element, Size = UDim2.new(1, -60, 0, 24),
+                    Position = UDim2.fromOffset(0, 52), Text = "", AutoButtonColor = false,
+                    BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                })
+                corner(ModeBtn, 5)
+                local ModeTxt = new("TextLabel", {
+                    BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Font = T.Font,
+                    TextSize = 12, TextColor3 = T.TextDim, Text = mode, ZIndex = 54, Parent = ModeBtn,
+                })
+                local Clear = new("TextButton", {
+                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(54, 24),
+                    Position = UDim2.new(1, -54, 0, 52), Text = "", AutoButtonColor = false,
+                    BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                })
+                corner(Clear, 5)
+                new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+                    Font = T.Font, TextSize = 12, TextColor3 = T.TextDim, Text = "Clear", ZIndex = 54, Parent = Clear })
+
+                local function setKey(k)
+                    key = k; Tg.Key = k
+                    KeyTxt.Text = k
+                    Library.Flags[flag .. "_Key"] = k
+                    tween(KB, { ImageColor3 = (k ~= "None") and T.Accent or T.Icon }, 0.12)
+                    Library:RefreshKeybinds()
+                end
+                local MODES = { "Toggle", "Hold", "Always" }
+                conn(ModeBtn.MouseButton1Click, function()
+                    local i = table.find(MODES, mode) or 1
+                    mode = MODES[(i % #MODES) + 1]
+                    Tg.Mode = mode
+                    ModeTxt.Text = mode
+                    Library.Flags[flag .. "_Mode"] = mode
+                    Library:RefreshKeybinds()
+                end)
+                conn(Clear.MouseButton1Click, function() setKey("None") end)
+                conn(KeyBtn.MouseButton1Click, function()
+                    binding = true
+                    Library._rebinding = true
+                    KeyTxt.Text = "press a key..."
+                    KeyTxt.TextColor3 = T.Accent
+                end)
+                conn(KB.MouseButton1Click, function()
+                    if P.frame.Visible then P.close() else P.openAt(KB) end
+                end)
+                for _, b in ipairs({ KeyBtn, ModeBtn, Clear }) do
+                    conn(b.MouseEnter, function() tween(b, { BackgroundColor3 = T.Hover }, 0.1) end)
+                    conn(b.MouseLeave, function() tween(b, { BackgroundColor3 = T.Element }, 0.1) end)
+                end
+
+                conn(UserInputService.InputBegan, function(i, gp)
+                    if binding and i.UserInputType == Enum.UserInputType.Keyboard then
+                        binding = false
+                        Library._rebinding = false
+                        KeyTxt.TextColor3 = T.Text
+                        setKey(i.KeyCode == Enum.KeyCode.Backspace and "None" or i.KeyCode.Name)
+                        return
+                    end
+                    if gp or binding or key == "None" then return end
+                    if i.KeyCode == Enum.KeyCode[key] then
+                        if mode == "Toggle" then Tg:SetValue(not Tg.Value)
+                        elseif mode == "Hold" then Tg:SetValue(true) end
+                    end
+                end)
+                conn(UserInputService.InputEnded, function(i)
+                    if mode == "Hold" and key ~= "None" and i.KeyCode == Enum.KeyCode[key] then
+                        Tg:SetValue(false)
+                    end
+                end)
+                if key ~= "None" then setKey(key) end
+            end
+
+            Tg:SetValue(Tg.Value, true)
+            Library:AttachTooltip(R, o.Tooltip)
+            Library.Toggles[flag] = Tg
+            Library.Options[flag] = Tg
+            return Tg
+        end
+
+        -- SLIDER — Figma: 301x34 #282828 box, label left + value right,
+        -- 2px #4583d9 underline at the bottom whose WIDTH is the value.
+        function Section:AddSlider(flag, o)
+            o = o or {}
+            local min, max = o.Min or 0, o.Max or 100
+            local S = { Value = o.Default or min, Type = "Slider" }
+            local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
+            local Box = new("Frame", {
+                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
+                Position = UDim2.fromOffset(20, 0), BorderSizePixel = 0, ClipsDescendants = true, Parent = R,
+            })
+            corner(Box, 6)
+            new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 0),
+                Size = UDim2.new(1, -110, 1, 0), Font = T.FontBold, TextSize = T.TextSize,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = o.Text or flag, Parent = Box,
+            })
+            local Val = new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.new(1, -95, 0, 0),
+                Size = UDim2.fromOffset(85, 34), Font = T.Font, TextSize = T.TextSize,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Right,
+                Text = "0", Parent = Box,
+            })
+            local Under = new("Frame", { -- the fill IS the underline
+                BackgroundColor3 = T.AccentDim, Size = UDim2.fromOffset(0, 2),
+                Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Box,
+            })
+
+            local function set(v, silent)
+                v = math.clamp(v, min, max)
+                local m = 10 ^ (o.Rounding or 2)
+                v = math.floor(v * m + 0.5) / m
+                S.Value = v
+                Library.Flags[flag] = v
+                local a = (max - min) == 0 and 0 or (v - min) / (max - min)
+                tween(Under, { Size = UDim2.new(a, 0, 0, 2) }, 0.08)
+                Val.Text = string.format(o.Format or "%.2f", v) .. (o.Suffix or "")
+                if not silent and o.Callback then task.spawn(o.Callback, v) end
+            end
+            S.SetValue = function(_, v, s) set(v, s) end
+            S.GetValue = function() return S.Value end
+
+            local dragging = false
+            local function fromX(x)
+                local a = math.clamp((x - Box.AbsolutePosition.X) / math.max(Box.AbsoluteSize.X, 1), 0, 1)
+                set(min + (max - min) * a)
+            end
+            conn(Box.InputBegan, function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true; fromX(i.Position.X)
+                    tween(Under, { BackgroundColor3 = T.Accent }, 0.1)
+                end
+            end)
+            conn(UserInputService.InputChanged, function(i)
+                if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then fromX(i.Position.X) end
+            end)
+            conn(UserInputService.InputEnded, function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+                    if dragging then tween(Under, { BackgroundColor3 = T.AccentDim }, 0.1) end
+                    dragging = false
+                end
+            end)
+            conn(Box.MouseEnter, function() tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
+            conn(Box.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
+
+            set(S.Value, true)
+            Library:AttachTooltip(R, o.Tooltip)
+            Library.Options[flag] = S
+            return S
+        end
+
+        -- DROPDOWN — same 301x34 box, but the underline spans the FULL width.
+        function Section:AddDropdown(flag, o)
+            o = o or {}
+            local values = o.Values or {}
+            local D = { Value = o.Default or values[1], Type = "Dropdown", Open = false }
+            local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
+            local Box = new("TextButton", {
+                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
+                Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
+                BorderSizePixel = 0, Parent = R,
+            })
+            corner(Box, 6)
+            new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 0),
+                Size = UDim2.new(1, -130, 1, 0), Font = T.FontBold, TextSize = T.TextSize,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = o.Text or flag, Parent = Box,
+            })
+            local Sel = new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.new(1, -125, 0, 0),
+                Size = UDim2.fromOffset(115, 34), Font = T.Font, TextSize = T.TextSize,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Right,
+                Text = tostring(D.Value or "..."), Parent = Box,
+            })
+            new("Frame", { -- full-width underline
+                BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
+                Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Box,
+            })
+            -- The menu lives in the POPUP LAYER, not under this row. ZIndexBehavior is
+            -- Sibling, so a menu parented here would only be ordered within its own row:
+            -- every row added after it draws on top and swallows the item clicks -- the
+            -- menu opened fine but nothing was selectable. The popup layer is top-level,
+            -- so it also escapes the section's ClipsDescendants.
+            local P = Library:MakePopup(301, 120)
+            local Menu = new("ScrollingFrame", {
+                BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), BorderSizePixel = 0,
+                ScrollBarThickness = 3, ScrollBarImageColor3 = T.Scroll,
+                CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                ZIndex = 53, Parent = P.body,
+            })
+            new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2), Parent = Menu })
+
+            local function rebuild()
+                for _, c in ipairs(Menu:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+                for _, v in ipairs(values) do
+                    local sel = (v == D.Value)
+                    local It = new("TextButton", {
+                        BackgroundColor3 = sel and T.Element or Color3.fromRGB(24, 24, 24),
+                        Size = UDim2.new(1, -4, 0, 26), Text = "", AutoButtonColor = false,
+                        BorderSizePixel = 0, ZIndex = 54, Parent = Menu,
+                    })
+                    corner(It, 5)
+                    new("TextLabel", {
+                        BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 0),
+                        Size = UDim2.new(1, -10, 1, 0), Font = T.Font, TextSize = 13,
+                        TextColor3 = sel and T.Accent or T.TextDim,
+                        TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(v), ZIndex = 55, Parent = It,
+                    })
+                    conn(It.MouseEnter, function() tween(It, { BackgroundColor3 = T.Hover }, 0.1) end)
+                    conn(It.MouseLeave, function()
+                        tween(It, { BackgroundColor3 = (v == D.Value) and T.Element or Color3.fromRGB(24, 24, 24) }, 0.1)
+                    end)
+                    conn(It.MouseButton1Click, function() D:SetValue(v); D:Close() end)
+                end
+            end
+            function D:SetValue(v, silent)
+                self.Value = v; Library.Flags[flag] = v
+                Sel.Text = tostring(v or "..."); rebuild()
+                if not silent and o.Callback then task.spawn(o.Callback, v) end
+            end
+            function D:SetValues(v) values = v or {}; rebuild() end
+            function D:GetValue() return self.Value end
+            function D:Close()
+                self.Open = false
+                P.close()
+            end
+            conn(Box.MouseButton1Click, function()
+                if D.Open then D:Close() return end
+                D.Open = true
+                P.openAt(Box, math.clamp(#values * 28 + 16, 44, 190)) -- grow to fit, then scroll
+            end)
+            conn(P.frame:GetPropertyChangedSignal("Visible"), function()
+                if not P.frame.Visible then D.Open = false end -- ClosePopups() closed us
+            end)
+            conn(Box.MouseEnter, function() tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
+            conn(Box.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
+            rebuild(); D:SetValue(D.Value, true)
+            Library:AttachTooltip(R, o.Tooltip)
+            Library.Options[flag] = D
+            return D
+        end
+
+        -- TEXTBOX — Figma: dim label ABOVE, then a 301x25 #282828 box.
+        function Section:AddTextbox(flag, o)
+            o = o or {}
+            local B = { Value = o.Default or "", Type = "Textbox" }
+            local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 48), Parent = Body_ })
+            new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.fromOffset(30, 0),
+                Size = UDim2.new(1, -40, 0, 20), Font = T.Font, TextSize = T.TextSize,
+                TextColor3 = T.TextDim, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = o.Text or flag, Parent = R,
+            })
+            local Box = new("Frame", {
+                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 25),
+                Position = UDim2.fromOffset(20, 22), BorderSizePixel = 0, Parent = R,
+            })
+            corner(Box, 5)
+            local Input = new("TextBox", {
+                BackgroundTransparency = 1, Size = UDim2.new(1, -20, 1, 0),
+                Position = UDim2.fromOffset(10, 0), Font = T.Font, TextSize = T.TextSize,
+                TextColor3 = T.TextDim, TextXAlignment = Enum.TextXAlignment.Left,
+                PlaceholderText = o.Placeholder or "", Text = tostring(B.Value),
+                ClearTextOnFocus = false, Parent = Box,
+            })
+            local Line = new("Frame", {
+                BackgroundColor3 = T.AccentDim, Size = UDim2.new(0, 0, 0, 2),
+                Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Box,
+            })
+            conn(Input.Focused, function()
+                tween(Line, { Size = UDim2.new(1, 0, 0, 2) }, 0.15)
+                tween(Input, { TextColor3 = T.Text }, 0.15)
+            end)
+            conn(Input.FocusLost, function()
+                tween(Line, { Size = UDim2.new(0, 0, 0, 2) }, 0.15)
+                tween(Input, { TextColor3 = T.TextDim }, 0.15)
+                B.Value = Input.Text; Library.Flags[flag] = Input.Text
+                if o.Callback then task.spawn(o.Callback, Input.Text) end
+            end)
+            function B:SetValue(v) Input.Text = tostring(v); self.Value = tostring(v); Library.Flags[flag] = self.Value end
+            function B:GetValue() return self.Value end
+            Library:AttachTooltip(R, o.Tooltip)
+            Library.Options[flag] = B
+            return B
+        end
+
+        function Section:AddButton(text, cb, tip)
+            local Btn = new("TextButton", {
+                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 30),
+                Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
+                BorderSizePixel = 0, Parent = Body_,
+            })
+            corner(Btn, 6)
+            new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+                Font = T.Font, TextSize = T.TextSize, TextColor3 = T.Text, Text = text or "Button", Parent = Btn })
+            new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
+                Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Btn })
+            conn(Btn.MouseEnter, function() tween(Btn, { BackgroundColor3 = T.Hover }, 0.12) end)
+            conn(Btn.MouseLeave, function() tween(Btn, { BackgroundColor3 = T.Element }, 0.12) end)
+            conn(Btn.MouseButton1Click, function() if cb then task.spawn(cb) end end)
+            Library:AttachTooltip(Btn, tip)
+            return Btn
+        end
+
+        -- COLOR PICKER — swatch on the row, click it for an HSV panel.
+        -- The SV square is built from two UIGradients over a hue-coloured frame
+        -- (white->clear horizontally, clear->black vertically), so no image assets.
+        function Section:AddColorPicker(flag, o)
+            o = o or {}
+            local CP = { Value = o.Default or T.Accent, Type = "ColorPicker", Alpha = o.Alpha or 0 }
+            local h, s, v = CP.Value:ToHSV()
+
+            local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 23), Parent = Body_ })
+            new("TextLabel", {
+                BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 0),
+                Size = UDim2.new(1, -60, 1, 0), Font = T.Font, TextSize = T.TextSize,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = o.Text or flag, Parent = R,
+            })
+            local Swatch = new("TextButton", {
+                BackgroundColor3 = CP.Value, Size = UDim2.fromOffset(34, 20),
+                Position = UDim2.fromOffset(288, 1), Text = "", AutoButtonColor = false,
+                BorderSizePixel = 0, Parent = R,
+            })
+            corner(Swatch, 5)
+            new("UIStroke", { Color = Color3.fromRGB(60, 60, 60), Thickness = 1, Parent = Swatch })
+
+            local P = Library:MakePopup(200, o.Alpha and 210 or 190)
+
+            -- SV square
+            local SV = new("Frame", {
+                BackgroundColor3 = Color3.fromHSV(h, 1, 1), Size = UDim2.fromOffset(180, 110),
+                BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+            })
+            corner(SV, 6)
+            local White = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 54, Parent = SV })
+            corner(White, 6)
+            new("UIGradient", {
+                Color = ColorSequence.new(Color3.new(1, 1, 1)),
+                Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
+                Parent = White,
+            })
+            local Black = new("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 55, Parent = SV })
+            corner(Black, 6)
+            new("UIGradient", {
+                Rotation = 90,
+                Color = ColorSequence.new(Color3.new(0, 0, 0)),
+                Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) }),
+                Parent = Black,
+            })
+            local Cursor = new("Frame", {
+                BackgroundTransparency = 1, Size = UDim2.fromOffset(10, 10),
+                AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 56, Parent = SV,
+            })
+            corner(Cursor, 5)
+            new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Parent = Cursor })
+
+            -- hue bar
+            local Hue = new("Frame", {
+                BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(180, 12),
+                Position = UDim2.fromOffset(0, 118), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+            })
+            corner(Hue, 6)
+            new("UIGradient", {
+                Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+                    ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+                    ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+                    ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
+                    ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+                    ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+                    ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
+                }), Parent = Hue,
+            })
+            local HueKnob = new("Frame", {
+                BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(3, 16),
+                AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+                BorderSizePixel = 0, ZIndex = 54, Parent = Hue,
+            })
+            corner(HueKnob, 2)
+
+            -- alpha bar (optional)
+            local AlphaBar, AlphaKnob
+            if o.Alpha then
+                AlphaBar = new("Frame", {
+                    BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(180, 12),
+                    Position = UDim2.fromOffset(0, 136), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                })
+                corner(AlphaBar, 6)
+                new("UIGradient", {
+                    Color = ColorSequence.new(CP.Value),
+                    Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
+                    Parent = AlphaBar,
+                })
+                AlphaKnob = new("Frame", {
+                    BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(3, 16),
+                    AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+                    BorderSizePixel = 0, ZIndex = 54, Parent = AlphaBar,
+                })
+                corner(AlphaKnob, 2)
+            end
+
+            -- hex box
+            local HexY = o.Alpha and 156 or 138
+            local HexBox = new("Frame", {
+                BackgroundColor3 = T.Element, Size = UDim2.fromOffset(180, 24),
+                Position = UDim2.fromOffset(0, HexY), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+            })
+            corner(HexBox, 5)
+            local Hex = new("TextBox", {
+                BackgroundTransparency = 1, Size = UDim2.new(1, -12, 1, 0),
+                Position = UDim2.fromOffset(6, 0), Font = T.Font, TextSize = 12,
+                TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = "#FFFFFF", ClearTextOnFocus = false, ZIndex = 54, Parent = HexBox,
+            })
+            new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
+                Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, ZIndex = 54, Parent = HexBox })
+
+            local function refresh(silent)
+                local col = Color3.fromHSV(h, s, v)
+                CP.Value = col
+                Library.Flags[flag] = col
+                Swatch.BackgroundColor3 = col
+                SV.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+                Cursor.Position = UDim2.new(s, 0, 1 - v, 0)
+                HueKnob.Position = UDim2.new(h, 0, 0.5, 0)
+                Hex.Text = string.format("#%02X%02X%02X",
+                    math.floor(col.R * 255 + 0.5), math.floor(col.G * 255 + 0.5), math.floor(col.B * 255 + 0.5))
+                if AlphaBar then
+                    AlphaBar.UIGradient.Color = ColorSequence.new(col)
+                    AlphaKnob.Position = UDim2.new(1 - CP.Alpha, 0, 0.5, 0)
+                end
+                if not silent and o.Callback then task.spawn(o.Callback, col, CP.Alpha) end
+            end
+
+            -- drag handling for SV / hue / alpha
+            local drag = nil
+            local function pick(input)
+                if drag == "sv" then
+                    s = math.clamp((input.Position.X - SV.AbsolutePosition.X) / SV.AbsoluteSize.X, 0, 1)
+                    v = 1 - math.clamp((input.Position.Y - SV.AbsolutePosition.Y) / SV.AbsoluteSize.Y, 0, 1)
+                    refresh()
+                elseif drag == "hue" then
+                    h = math.clamp((input.Position.X - Hue.AbsolutePosition.X) / Hue.AbsoluteSize.X, 0, 1)
+                    refresh()
+                elseif drag == "alpha" and AlphaBar then
+                    CP.Alpha = 1 - math.clamp((input.Position.X - AlphaBar.AbsolutePosition.X) / AlphaBar.AbsoluteSize.X, 0, 1)
+                    refresh()
+                end
+            end
+            conn(SV.InputBegan, function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "sv" pick(i) end
+            end)
+            conn(Hue.InputBegan, function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "hue" pick(i) end
+            end)
+            if AlphaBar then
+                conn(AlphaBar.InputBegan, function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "alpha" pick(i) end
+                end)
+            end
+            conn(UserInputService.InputChanged, function(i)
+                if drag and i.UserInputType == Enum.UserInputType.MouseMovement then pick(i) end
+            end)
+            conn(UserInputService.InputEnded, function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = nil end
+            end)
+            conn(Hex.FocusLost, function()
+                local hx = Hex.Text:gsub("#", "")
+                if #hx == 6 and tonumber(hx, 16) then
+                    local n = tonumber(hx, 16)
+                    local col = Color3.fromRGB(bit32.band(bit32.rshift(n, 16), 255), bit32.band(bit32.rshift(n, 8), 255), bit32.band(n, 255))
+                    h, s, v = col:ToHSV()
+                end
+                refresh()
+            end)
+            conn(Swatch.MouseButton1Click, function()
+                if P.frame.Visible then P.close() else P.openAt(Swatch) end
+            end)
+
+            function CP:SetValue(col, silent)
+                h, s, v = col:ToHSV()
+                refresh(silent)
+            end
+            function CP:GetValue() return self.Value end
+            refresh(true)
+            Library:AttachTooltip(R, o.Tooltip)
+            Library.Options[flag] = CP
+            return CP
+        end
+
+        function Section:AddLabel(text)
+            local L = new("TextLabel", {
+                BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 18),
+                Position = UDim2.fromOffset(20, 0), Font = T.Font, TextSize = 13,
+                TextColor3 = T.TextDim, TextXAlignment = Enum.TextXAlignment.Left,
+                TextWrapped = true, Text = text or "", Parent = Body_,
+            })
+            local o = {} function o:SetText(t) L.Text = t end
+            return o
+        end
+
+    return Section
+end
 
 function Library:CreateWindow(opts)
     opts = opts or {}
@@ -648,14 +1180,19 @@ function Library:CreateWindow(opts)
     })
     self._crumb = Crumb
 
-    -- gear, top-right
+    -- Gear, top-right. Parented to Main (not Body) and given a ZIndex above the drag Bar:
+    -- the Bar is a TextButton covering the whole top 100px and is created after Body, so
+    -- under ZIndexBehavior.Sibling it drew over the gear and swallowed every click. Raising
+    -- the gear's ZIndex inside Body would do nothing -- Body's subtree draws as one group,
+    -- beneath the Bar. Screen position is unchanged: Body sits at x=3 and is 848 wide, so
+    -- 3 + (848-50) == 851-50.
     local Gear = new("TextButton", {
-        BackgroundTransparency = 1, Size = UDim2.fromOffset(26, 26),
-        Position = UDim2.new(1, -50, 0, 28), Text = "", AutoButtonColor = false, Parent = Body,
+        BackgroundTransparency = 1, Size = UDim2.fromOffset(26, 26), ZIndex = 5,
+        Position = UDim2.new(1, -50, 0, 28), Text = "", AutoButtonColor = false, Parent = Main,
     })
     local GearIco = new("ImageLabel", {
         BackgroundTransparency = 1, Image = Library:LoadIcon("gear"), ImageColor3 = T.Icon,
-        ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromScale(1, 1), Parent = Gear,
+        ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromScale(1, 1), ZIndex = 6, Parent = Gear,
     })
     conn(Gear.MouseEnter, function() tween(GearIco, { ImageColor3 = T.Text, Rotation = 45 }, 0.2) end)
     conn(Gear.MouseLeave, function() tween(GearIco, { ImageColor3 = T.Icon, Rotation = 0 }, 0.2) end)
@@ -832,600 +1369,8 @@ function Library:CreateWindow(opts)
             new("UIListLayout", { Padding = UDim.new(0, right and 17 or 11), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Body_ })
             Section._panel, Section._body = Panel, Body_
 
-            -- TOGGLE — Figma: box 23x23 @x115 (panel-rel 12), label @x150 (rel 47),
-            -- keybind glyph @x403 (rel 300), row pitch 34.
-            function Section:AddToggle(flag, o)
-                o = o or {}
-                local Tg = { Value = o.Default or false, Type = "Toggle" }
-                local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 23), Parent = Body_ })
-
-                local Box = new("Frame", {
-                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(23, 23),
-                    Position = UDim2.fromOffset(12, 0), BorderSizePixel = 0, Parent = R,
-                })
-                corner(Box, 5)
-                local Fill = new("Frame", { -- checked = 19x19 #0596ff, inset +2
-                    BackgroundColor3 = T.Accent, Size = UDim2.fromOffset(0, 0),
-                    Position = UDim2.fromOffset(11, 11), AnchorPoint = Vector2.new(0.5, 0.5),
-                    BorderSizePixel = 0, Parent = Box,
-                })
-                corner(Fill, 4)
-                local L = new("TextLabel", {
-                    BackgroundTransparency = 1, Position = UDim2.fromOffset(47, 0),
-                    Size = UDim2.new(1, -100, 1, 0), Font = T.Font, TextSize = T.TextSize,
-                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-                    Text = o.Text or flag, Parent = R,
-                })
-                -- keybind glyph on the right of every row
-                local KB
-                if o.Keybind ~= false then
-                    KB = new("ImageButton", {
-                        BackgroundTransparency = 1, Image = Library:LoadIcon("keybind"),
-                        ImageColor3 = T.Icon, ScaleType = Enum.ScaleType.Fit,
-                        Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(300, 0), Parent = R,
-                    })
-                end
-
-                local Hit = new("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, -40, 1, 0),
-                    Text = "", AutoButtonColor = false, Parent = R })
-
-                Tg._text = o.Text or flag -- what the keybind list shows for this row
-                function Tg:SetValue(v, silent)
-                    self.Value = v and true or false
-                    Library.Flags[flag] = self.Value
-                    -- Back easing OVERSHOOTS its target. Growing 0->19 that's a nice pop,
-                    -- but shrinking 19->0 it overshoots negative, which renders as nothing --
-                    -- the fill just blinked out and the un-toggle looked unanimated. So:
-                    -- Back only on the way in, a soft Quint collapse on the way out, with
-                    -- the fade riding along so it dissolves rather than snapping.
-                    if self.Value then
-                        tween(Fill, { Size = UDim2.fromOffset(19, 19), BackgroundTransparency = 0 },
-                            0.22, Enum.EasingStyle.Back)
-                    else
-                        tween(Fill, { Size = UDim2.fromOffset(4, 4), BackgroundTransparency = 1 },
-                            0.18, Enum.EasingStyle.Quint)
-                    end
-                    tween(Box, { BackgroundColor3 = self.Value and T.AccentDim or T.Element }, 0.18)
-                    -- keep the keybind list's lit state honest, but only while it's shown
-                    if Library._kbList and Library._kbList.Visible then Library:RefreshKeybinds() end
-                    if not silent and o.Callback then task.spawn(o.Callback, self.Value) end
-                end
-                function Tg:GetValue() return self.Value end
-                conn(Hit.MouseButton1Click, function() Tg:SetValue(not Tg.Value) end)
-                conn(Hit.MouseEnter, function() tween(Box, { BackgroundColor3 = Tg.Value and T.Accent or T.Hover }, 0.12) end)
-                conn(Hit.MouseLeave, function() -- settle back to the state colour, not always Element
-                    tween(Box, { BackgroundColor3 = Tg.Value and T.AccentDim or T.Element }, 0.12)
-                end)
-
-                -- Keybind PANEL: clicking the glyph spawns a popup (key + mode + clear)
-                -- rather than silently entering a listen state.
-                if KB then
-                    local key, mode, binding = o.Key or "None", o.Mode or "Toggle", false
-                    Tg.Key, Tg.Mode = key, mode
-
-                    local P = Library:MakePopup(178, 96)
-                    new("TextLabel", {
-                        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 16), Font = T.FontBold,
-                        TextSize = 13, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-                        Text = "Keybind", ZIndex = 53, Parent = P.body,
-                    })
-                    local KeyBtn = new("TextButton", {
-                        BackgroundColor3 = T.Element, Size = UDim2.new(1, 0, 0, 26),
-                        Position = UDim2.fromOffset(0, 20), Text = "", AutoButtonColor = false,
-                        BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
-                    })
-                    corner(KeyBtn, 5)
-                    local KeyTxt = new("TextLabel", {
-                        BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Font = T.Font,
-                        TextSize = 13, TextColor3 = T.Text, Text = key, ZIndex = 54, Parent = KeyBtn,
-                    })
-                    new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
-                        Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, ZIndex = 54, Parent = KeyBtn })
-
-                    -- mode cycles Toggle -> Hold -> Always
-                    local ModeBtn = new("TextButton", {
-                        BackgroundColor3 = T.Element, Size = UDim2.new(1, -60, 0, 24),
-                        Position = UDim2.fromOffset(0, 52), Text = "", AutoButtonColor = false,
-                        BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
-                    })
-                    corner(ModeBtn, 5)
-                    local ModeTxt = new("TextLabel", {
-                        BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Font = T.Font,
-                        TextSize = 12, TextColor3 = T.TextDim, Text = mode, ZIndex = 54, Parent = ModeBtn,
-                    })
-                    local Clear = new("TextButton", {
-                        BackgroundColor3 = T.Element, Size = UDim2.fromOffset(54, 24),
-                        Position = UDim2.new(1, -54, 0, 52), Text = "", AutoButtonColor = false,
-                        BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
-                    })
-                    corner(Clear, 5)
-                    new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
-                        Font = T.Font, TextSize = 12, TextColor3 = T.TextDim, Text = "Clear", ZIndex = 54, Parent = Clear })
-
-                    local function setKey(k)
-                        key = k; Tg.Key = k
-                        KeyTxt.Text = k
-                        Library.Flags[flag .. "_Key"] = k
-                        tween(KB, { ImageColor3 = (k ~= "None") and T.Accent or T.Icon }, 0.12)
-                        Library:RefreshKeybinds()
-                    end
-                    local MODES = { "Toggle", "Hold", "Always" }
-                    conn(ModeBtn.MouseButton1Click, function()
-                        local i = table.find(MODES, mode) or 1
-                        mode = MODES[(i % #MODES) + 1]
-                        Tg.Mode = mode
-                        ModeTxt.Text = mode
-                        Library.Flags[flag .. "_Mode"] = mode
-                        Library:RefreshKeybinds()
-                    end)
-                    conn(Clear.MouseButton1Click, function() setKey("None") end)
-                    conn(KeyBtn.MouseButton1Click, function()
-                        binding = true
-                        Library._rebinding = true
-                        KeyTxt.Text = "press a key..."
-                        KeyTxt.TextColor3 = T.Accent
-                    end)
-                    conn(KB.MouseButton1Click, function()
-                        if P.frame.Visible then P.close() else P.openAt(KB) end
-                    end)
-                    for _, b in ipairs({ KeyBtn, ModeBtn, Clear }) do
-                        conn(b.MouseEnter, function() tween(b, { BackgroundColor3 = T.Hover }, 0.1) end)
-                        conn(b.MouseLeave, function() tween(b, { BackgroundColor3 = T.Element }, 0.1) end)
-                    end
-
-                    conn(UserInputService.InputBegan, function(i, gp)
-                        if binding and i.UserInputType == Enum.UserInputType.Keyboard then
-                            binding = false
-                            Library._rebinding = false
-                            KeyTxt.TextColor3 = T.Text
-                            setKey(i.KeyCode == Enum.KeyCode.Backspace and "None" or i.KeyCode.Name)
-                            return
-                        end
-                        if gp or binding or key == "None" then return end
-                        if i.KeyCode == Enum.KeyCode[key] then
-                            if mode == "Toggle" then Tg:SetValue(not Tg.Value)
-                            elseif mode == "Hold" then Tg:SetValue(true) end
-                        end
-                    end)
-                    conn(UserInputService.InputEnded, function(i)
-                        if mode == "Hold" and key ~= "None" and i.KeyCode == Enum.KeyCode[key] then
-                            Tg:SetValue(false)
-                        end
-                    end)
-                    if key ~= "None" then setKey(key) end
-                end
-
-                Tg:SetValue(Tg.Value, true)
-                Library:AttachTooltip(R, o.Tooltip)
-                Library.Toggles[flag] = Tg
-                Library.Options[flag] = Tg
-                return Tg
-            end
-
-            -- SLIDER — Figma: 301x34 #282828 box, label left + value right,
-            -- 2px #4583d9 underline at the bottom whose WIDTH is the value.
-            function Section:AddSlider(flag, o)
-                o = o or {}
-                local min, max = o.Min or 0, o.Max or 100
-                local S = { Value = o.Default or min, Type = "Slider" }
-                local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
-                local Box = new("Frame", {
-                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
-                    Position = UDim2.fromOffset(20, 0), BorderSizePixel = 0, ClipsDescendants = true, Parent = R,
-                })
-                corner(Box, 6)
-                new("TextLabel", {
-                    BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 0),
-                    Size = UDim2.new(1, -110, 1, 0), Font = T.FontBold, TextSize = T.TextSize,
-                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-                    Text = o.Text or flag, Parent = Box,
-                })
-                local Val = new("TextLabel", {
-                    BackgroundTransparency = 1, Position = UDim2.new(1, -95, 0, 0),
-                    Size = UDim2.fromOffset(85, 34), Font = T.Font, TextSize = T.TextSize,
-                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Right,
-                    Text = "0", Parent = Box,
-                })
-                local Under = new("Frame", { -- the fill IS the underline
-                    BackgroundColor3 = T.AccentDim, Size = UDim2.fromOffset(0, 2),
-                    Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Box,
-                })
-
-                local function set(v, silent)
-                    v = math.clamp(v, min, max)
-                    local m = 10 ^ (o.Rounding or 2)
-                    v = math.floor(v * m + 0.5) / m
-                    S.Value = v
-                    Library.Flags[flag] = v
-                    local a = (max - min) == 0 and 0 or (v - min) / (max - min)
-                    tween(Under, { Size = UDim2.new(a, 0, 0, 2) }, 0.08)
-                    Val.Text = string.format(o.Format or "%.2f", v) .. (o.Suffix or "")
-                    if not silent and o.Callback then task.spawn(o.Callback, v) end
-                end
-                S.SetValue = function(_, v, s) set(v, s) end
-                S.GetValue = function() return S.Value end
-
-                local dragging = false
-                local function fromX(x)
-                    local a = math.clamp((x - Box.AbsolutePosition.X) / math.max(Box.AbsoluteSize.X, 1), 0, 1)
-                    set(min + (max - min) * a)
-                end
-                conn(Box.InputBegan, function(i)
-                    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-                        dragging = true; fromX(i.Position.X)
-                        tween(Under, { BackgroundColor3 = T.Accent }, 0.1)
-                    end
-                end)
-                conn(UserInputService.InputChanged, function(i)
-                    if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then fromX(i.Position.X) end
-                end)
-                conn(UserInputService.InputEnded, function(i)
-                    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-                        if dragging then tween(Under, { BackgroundColor3 = T.AccentDim }, 0.1) end
-                        dragging = false
-                    end
-                end)
-                conn(Box.MouseEnter, function() tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
-                conn(Box.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
-
-                set(S.Value, true)
-                Library:AttachTooltip(R, o.Tooltip)
-                Library.Options[flag] = S
-                return S
-            end
-
-            -- DROPDOWN — same 301x34 box, but the underline spans the FULL width.
-            function Section:AddDropdown(flag, o)
-                o = o or {}
-                local values = o.Values or {}
-                local D = { Value = o.Default or values[1], Type = "Dropdown", Open = false }
-                local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), Parent = Body_ })
-                local Box = new("TextButton", {
-                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 34),
-                    Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
-                    BorderSizePixel = 0, Parent = R,
-                })
-                corner(Box, 6)
-                new("TextLabel", {
-                    BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 0),
-                    Size = UDim2.new(1, -130, 1, 0), Font = T.FontBold, TextSize = T.TextSize,
-                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-                    Text = o.Text or flag, Parent = Box,
-                })
-                local Sel = new("TextLabel", {
-                    BackgroundTransparency = 1, Position = UDim2.new(1, -125, 0, 0),
-                    Size = UDim2.fromOffset(115, 34), Font = T.Font, TextSize = T.TextSize,
-                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Right,
-                    Text = tostring(D.Value or "..."), Parent = Box,
-                })
-                new("Frame", { -- full-width underline
-                    BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
-                    Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Box,
-                })
-                -- The menu lives in the POPUP LAYER, not under this row. ZIndexBehavior is
-                -- Sibling, so a menu parented here would only be ordered within its own row:
-                -- every row added after it draws on top and swallows the item clicks -- the
-                -- menu opened fine but nothing was selectable. The popup layer is top-level,
-                -- so it also escapes the section's ClipsDescendants.
-                local P = Library:MakePopup(301, 120)
-                local Menu = new("ScrollingFrame", {
-                    BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), BorderSizePixel = 0,
-                    ScrollBarThickness = 3, ScrollBarImageColor3 = T.Scroll,
-                    CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                    ZIndex = 53, Parent = P.body,
-                })
-                new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2), Parent = Menu })
-
-                local function rebuild()
-                    for _, c in ipairs(Menu:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-                    for _, v in ipairs(values) do
-                        local sel = (v == D.Value)
-                        local It = new("TextButton", {
-                            BackgroundColor3 = sel and T.Element or Color3.fromRGB(24, 24, 24),
-                            Size = UDim2.new(1, -4, 0, 26), Text = "", AutoButtonColor = false,
-                            BorderSizePixel = 0, ZIndex = 54, Parent = Menu,
-                        })
-                        corner(It, 5)
-                        new("TextLabel", {
-                            BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 0),
-                            Size = UDim2.new(1, -10, 1, 0), Font = T.Font, TextSize = 13,
-                            TextColor3 = sel and T.Accent or T.TextDim,
-                            TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(v), ZIndex = 55, Parent = It,
-                        })
-                        conn(It.MouseEnter, function() tween(It, { BackgroundColor3 = T.Hover }, 0.1) end)
-                        conn(It.MouseLeave, function()
-                            tween(It, { BackgroundColor3 = (v == D.Value) and T.Element or Color3.fromRGB(24, 24, 24) }, 0.1)
-                        end)
-                        conn(It.MouseButton1Click, function() D:SetValue(v); D:Close() end)
-                    end
-                end
-                function D:SetValue(v, silent)
-                    self.Value = v; Library.Flags[flag] = v
-                    Sel.Text = tostring(v or "..."); rebuild()
-                    if not silent and o.Callback then task.spawn(o.Callback, v) end
-                end
-                function D:SetValues(v) values = v or {}; rebuild() end
-                function D:GetValue() return self.Value end
-                function D:Close()
-                    self.Open = false
-                    P.close()
-                end
-                conn(Box.MouseButton1Click, function()
-                    if D.Open then D:Close() return end
-                    D.Open = true
-                    P.openAt(Box, math.clamp(#values * 28 + 16, 44, 190)) -- grow to fit, then scroll
-                end)
-                conn(P.frame:GetPropertyChangedSignal("Visible"), function()
-                    if not P.frame.Visible then D.Open = false end -- ClosePopups() closed us
-                end)
-                conn(Box.MouseEnter, function() tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
-                conn(Box.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
-                rebuild(); D:SetValue(D.Value, true)
-                Library:AttachTooltip(R, o.Tooltip)
-                Library.Options[flag] = D
-                return D
-            end
-
-            -- TEXTBOX — Figma: dim label ABOVE, then a 301x25 #282828 box.
-            function Section:AddTextbox(flag, o)
-                o = o or {}
-                local B = { Value = o.Default or "", Type = "Textbox" }
-                local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 48), Parent = Body_ })
-                new("TextLabel", {
-                    BackgroundTransparency = 1, Position = UDim2.fromOffset(30, 0),
-                    Size = UDim2.new(1, -40, 0, 20), Font = T.Font, TextSize = T.TextSize,
-                    TextColor3 = T.TextDim, TextXAlignment = Enum.TextXAlignment.Left,
-                    Text = o.Text or flag, Parent = R,
-                })
-                local Box = new("Frame", {
-                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 25),
-                    Position = UDim2.fromOffset(20, 22), BorderSizePixel = 0, Parent = R,
-                })
-                corner(Box, 5)
-                local Input = new("TextBox", {
-                    BackgroundTransparency = 1, Size = UDim2.new(1, -20, 1, 0),
-                    Position = UDim2.fromOffset(10, 0), Font = T.Font, TextSize = T.TextSize,
-                    TextColor3 = T.TextDim, TextXAlignment = Enum.TextXAlignment.Left,
-                    PlaceholderText = o.Placeholder or "", Text = tostring(B.Value),
-                    ClearTextOnFocus = false, Parent = Box,
-                })
-                local Line = new("Frame", {
-                    BackgroundColor3 = T.AccentDim, Size = UDim2.new(0, 0, 0, 2),
-                    Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Box,
-                })
-                conn(Input.Focused, function()
-                    tween(Line, { Size = UDim2.new(1, 0, 0, 2) }, 0.15)
-                    tween(Input, { TextColor3 = T.Text }, 0.15)
-                end)
-                conn(Input.FocusLost, function()
-                    tween(Line, { Size = UDim2.new(0, 0, 0, 2) }, 0.15)
-                    tween(Input, { TextColor3 = T.TextDim }, 0.15)
-                    B.Value = Input.Text; Library.Flags[flag] = Input.Text
-                    if o.Callback then task.spawn(o.Callback, Input.Text) end
-                end)
-                function B:SetValue(v) Input.Text = tostring(v); self.Value = tostring(v); Library.Flags[flag] = self.Value end
-                function B:GetValue() return self.Value end
-                Library:AttachTooltip(R, o.Tooltip)
-                Library.Options[flag] = B
-                return B
-            end
-
-            function Section:AddButton(text, cb, tip)
-                local Btn = new("TextButton", {
-                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(301, 30),
-                    Position = UDim2.fromOffset(20, 0), Text = "", AutoButtonColor = false,
-                    BorderSizePixel = 0, Parent = Body_,
-                })
-                corner(Btn, 6)
-                new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
-                    Font = T.Font, TextSize = T.TextSize, TextColor3 = T.Text, Text = text or "Button", Parent = Btn })
-                new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
-                    Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Btn })
-                conn(Btn.MouseEnter, function() tween(Btn, { BackgroundColor3 = T.Hover }, 0.12) end)
-                conn(Btn.MouseLeave, function() tween(Btn, { BackgroundColor3 = T.Element }, 0.12) end)
-                conn(Btn.MouseButton1Click, function() if cb then task.spawn(cb) end end)
-                Library:AttachTooltip(Btn, tip)
-                return Btn
-            end
-
-            -- COLOR PICKER — swatch on the row, click it for an HSV panel.
-            -- The SV square is built from two UIGradients over a hue-coloured frame
-            -- (white->clear horizontally, clear->black vertically), so no image assets.
-            function Section:AddColorPicker(flag, o)
-                o = o or {}
-                local CP = { Value = o.Default or T.Accent, Type = "ColorPicker", Alpha = o.Alpha or 0 }
-                local h, s, v = CP.Value:ToHSV()
-
-                local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 23), Parent = Body_ })
-                new("TextLabel", {
-                    BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 0),
-                    Size = UDim2.new(1, -60, 1, 0), Font = T.Font, TextSize = T.TextSize,
-                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-                    Text = o.Text or flag, Parent = R,
-                })
-                local Swatch = new("TextButton", {
-                    BackgroundColor3 = CP.Value, Size = UDim2.fromOffset(34, 20),
-                    Position = UDim2.fromOffset(288, 1), Text = "", AutoButtonColor = false,
-                    BorderSizePixel = 0, Parent = R,
-                })
-                corner(Swatch, 5)
-                new("UIStroke", { Color = Color3.fromRGB(60, 60, 60), Thickness = 1, Parent = Swatch })
-
-                local P = Library:MakePopup(200, o.Alpha and 210 or 190)
-
-                -- SV square
-                local SV = new("Frame", {
-                    BackgroundColor3 = Color3.fromHSV(h, 1, 1), Size = UDim2.fromOffset(180, 110),
-                    BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
-                })
-                corner(SV, 6)
-                local White = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 54, Parent = SV })
-                corner(White, 6)
-                new("UIGradient", {
-                    Color = ColorSequence.new(Color3.new(1, 1, 1)),
-                    Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
-                    Parent = White,
-                })
-                local Black = new("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 55, Parent = SV })
-                corner(Black, 6)
-                new("UIGradient", {
-                    Rotation = 90,
-                    Color = ColorSequence.new(Color3.new(0, 0, 0)),
-                    Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) }),
-                    Parent = Black,
-                })
-                local Cursor = new("Frame", {
-                    BackgroundTransparency = 1, Size = UDim2.fromOffset(10, 10),
-                    AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 56, Parent = SV,
-                })
-                corner(Cursor, 5)
-                new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Parent = Cursor })
-
-                -- hue bar
-                local Hue = new("Frame", {
-                    BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(180, 12),
-                    Position = UDim2.fromOffset(0, 118), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
-                })
-                corner(Hue, 6)
-                new("UIGradient", {
-                    Color = ColorSequence.new({
-                        ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
-                        ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
-                        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
-                        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
-                        ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
-                        ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
-                        ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
-                    }), Parent = Hue,
-                })
-                local HueKnob = new("Frame", {
-                    BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(3, 16),
-                    AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
-                    BorderSizePixel = 0, ZIndex = 54, Parent = Hue,
-                })
-                corner(HueKnob, 2)
-
-                -- alpha bar (optional)
-                local AlphaBar, AlphaKnob
-                if o.Alpha then
-                    AlphaBar = new("Frame", {
-                        BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(180, 12),
-                        Position = UDim2.fromOffset(0, 136), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
-                    })
-                    corner(AlphaBar, 6)
-                    new("UIGradient", {
-                        Color = ColorSequence.new(CP.Value),
-                        Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
-                        Parent = AlphaBar,
-                    })
-                    AlphaKnob = new("Frame", {
-                        BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(3, 16),
-                        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
-                        BorderSizePixel = 0, ZIndex = 54, Parent = AlphaBar,
-                    })
-                    corner(AlphaKnob, 2)
-                end
-
-                -- hex box
-                local HexY = o.Alpha and 156 or 138
-                local HexBox = new("Frame", {
-                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(180, 24),
-                    Position = UDim2.fromOffset(0, HexY), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
-                })
-                corner(HexBox, 5)
-                local Hex = new("TextBox", {
-                    BackgroundTransparency = 1, Size = UDim2.new(1, -12, 1, 0),
-                    Position = UDim2.fromOffset(6, 0), Font = T.Font, TextSize = 12,
-                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-                    Text = "#FFFFFF", ClearTextOnFocus = false, ZIndex = 54, Parent = HexBox,
-                })
-                new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
-                    Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, ZIndex = 54, Parent = HexBox })
-
-                local function refresh(silent)
-                    local col = Color3.fromHSV(h, s, v)
-                    CP.Value = col
-                    Library.Flags[flag] = col
-                    Swatch.BackgroundColor3 = col
-                    SV.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
-                    Cursor.Position = UDim2.new(s, 0, 1 - v, 0)
-                    HueKnob.Position = UDim2.new(h, 0, 0.5, 0)
-                    Hex.Text = string.format("#%02X%02X%02X",
-                        math.floor(col.R * 255 + 0.5), math.floor(col.G * 255 + 0.5), math.floor(col.B * 255 + 0.5))
-                    if AlphaBar then
-                        AlphaBar.UIGradient.Color = ColorSequence.new(col)
-                        AlphaKnob.Position = UDim2.new(1 - CP.Alpha, 0, 0.5, 0)
-                    end
-                    if not silent and o.Callback then task.spawn(o.Callback, col, CP.Alpha) end
-                end
-
-                -- drag handling for SV / hue / alpha
-                local drag = nil
-                local function pick(input)
-                    if drag == "sv" then
-                        s = math.clamp((input.Position.X - SV.AbsolutePosition.X) / SV.AbsoluteSize.X, 0, 1)
-                        v = 1 - math.clamp((input.Position.Y - SV.AbsolutePosition.Y) / SV.AbsoluteSize.Y, 0, 1)
-                        refresh()
-                    elseif drag == "hue" then
-                        h = math.clamp((input.Position.X - Hue.AbsolutePosition.X) / Hue.AbsoluteSize.X, 0, 1)
-                        refresh()
-                    elseif drag == "alpha" and AlphaBar then
-                        CP.Alpha = 1 - math.clamp((input.Position.X - AlphaBar.AbsolutePosition.X) / AlphaBar.AbsoluteSize.X, 0, 1)
-                        refresh()
-                    end
-                end
-                conn(SV.InputBegan, function(i)
-                    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "sv" pick(i) end
-                end)
-                conn(Hue.InputBegan, function(i)
-                    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "hue" pick(i) end
-                end)
-                if AlphaBar then
-                    conn(AlphaBar.InputBegan, function(i)
-                        if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "alpha" pick(i) end
-                    end)
-                end
-                conn(UserInputService.InputChanged, function(i)
-                    if drag and i.UserInputType == Enum.UserInputType.MouseMovement then pick(i) end
-                end)
-                conn(UserInputService.InputEnded, function(i)
-                    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = nil end
-                end)
-                conn(Hex.FocusLost, function()
-                    local hx = Hex.Text:gsub("#", "")
-                    if #hx == 6 and tonumber(hx, 16) then
-                        local n = tonumber(hx, 16)
-                        local col = Color3.fromRGB(bit32.band(bit32.rshift(n, 16), 255), bit32.band(bit32.rshift(n, 8), 255), bit32.band(n, 255))
-                        h, s, v = col:ToHSV()
-                    end
-                    refresh()
-                end)
-                conn(Swatch.MouseButton1Click, function()
-                    if P.frame.Visible then P.close() else P.openAt(Swatch) end
-                end)
-
-                function CP:SetValue(col, silent)
-                    h, s, v = col:ToHSV()
-                    refresh(silent)
-                end
-                function CP:GetValue() return self.Value end
-                refresh(true)
-                Library:AttachTooltip(R, o.Tooltip)
-                Library.Options[flag] = CP
-                return CP
-            end
-
-            function Section:AddLabel(text)
-                local L = new("TextLabel", {
-                    BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 18),
-                    Position = UDim2.fromOffset(20, 0), Font = T.Font, TextSize = 13,
-                    TextColor3 = T.TextDim, TextXAlignment = Enum.TextXAlignment.Left,
-                    TextWrapped = true, Text = text or "", Parent = Body_,
-                })
-                local o = {} function o:SetText(t) L.Text = t end
-                return o
-            end
-
+            local S2 = buildSection(Body_)
+            for k, v in pairs(S2) do Section[k] = v end
             return Section
         end
 
