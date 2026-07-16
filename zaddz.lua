@@ -48,9 +48,10 @@ local Library = {
         FontBold  = Enum.Font.GothamBold,
         TextSize  = 14,
     },
-    ToggleKey = Enum.KeyCode.RightShift,
+    ToggleKey = Enum.KeyCode.Insert,
     IconBase = "https://raw.githubusercontent.com/leuleulolo62-droid/zaddz/main/icons/",
     _icons = {},
+    _popups = {},
 }
 local T = Library.Theme
 local function TW(t, style)
@@ -88,6 +89,51 @@ function Library:LoadIcon(name)
     if not ok then id = "" end
     self._icons[name] = id
     return id
+end
+
+function Library:ClosePopups(except)
+    for _, p in ipairs(self._popups) do
+        if p ~= except and p.frame and p.frame.Visible then p.close() end
+    end
+end
+
+-- Shared popup panel: same look as a section (#1e1e1e r12), floats in the popup layer,
+-- anchored under whatever element opened it. Only one is ever open at a time.
+function Library:MakePopup(w, h)
+    local frame = new("Frame", {
+        BackgroundColor3 = T.Panel, Size = UDim2.fromOffset(w, 0),
+        Visible = false, ClipsDescendants = true, BorderSizePixel = 0,
+        ZIndex = 51, Parent = self._popupLayer,
+    })
+    corner(frame, 12)
+    new("UIStroke", { Color = Color3.fromRGB(48, 48, 48), Thickness = 1, Parent = frame })
+    local body = new("Frame", {
+        BackgroundTransparency = 1, Size = UDim2.new(1, -20, 1, -16),
+        Position = UDim2.fromOffset(10, 8), ZIndex = 52, Parent = frame,
+    })
+    local P = { frame = frame, body = body, h = h, hovering = false }
+    conn(frame.MouseEnter, function() P.hovering = true end)
+    conn(frame.MouseLeave, function() P.hovering = false end)
+
+    function P.openAt(el)
+        Library:ClosePopups(P)
+        -- position under the element, clamped inside the window
+        local main = Library._main
+        local rel = el.AbsolutePosition - main.AbsolutePosition
+        local x = math.clamp(rel.X, 8, main.AbsoluteSize.X - w - 8)
+        local y = rel.Y + el.AbsoluteSize.Y + 6
+        if y + h > main.AbsoluteSize.Y - 8 then y = rel.Y - h - 6 end -- flip above
+        frame.Position = UDim2.fromOffset(x, y)
+        frame.Visible = true
+        frame.Size = UDim2.fromOffset(w, 0)
+        tween(frame, { Size = UDim2.fromOffset(w, h) }, 0.16, Enum.EasingStyle.Quad)
+    end
+    function P.close()
+        tween(frame, { Size = UDim2.fromOffset(w, 0) }, 0.12)
+        task.delay(0.13, function() frame.Visible = false end)
+    end
+    table.insert(self._popups, P)
+    return P
 end
 
 function Library:Notify(text, duration)
@@ -168,21 +214,25 @@ function Library:CreateWindow(opts)
         Position = UDim2.fromOffset(62, 0), BorderSizePixel = 0, Parent = Sidebar,
     })
 
-    -- logo: Vector 1 @12,15 46x39, with the white glow from the render
-    local LogoGlow = new("ImageLabel", {
-        BackgroundTransparency = 1, Image = Library:LoadIcon("logo"),
-        ImageColor3 = Color3.fromRGB(255, 255, 255), ImageTransparency = 0.72,
-        Size = UDim2.fromOffset(66, 59), Position = UDim2.fromOffset(2, 5), Parent = Sidebar,
+    -- Logo: centred on the Figma vector's centre (12+23, 15+19.5). The PNG is trimmed to
+    -- its real 283x296 aspect, so it's drawn 44x46 with Fit -- no squashing.
+    local LogoHalo = new("ImageLabel", { -- soft white bloom behind the S
+        BackgroundTransparency = 1, Image = Library:LoadIcon("glow"),
+        ImageColor3 = Color3.fromRGB(255, 255, 255), ImageTransparency = 0.62,
+        Size = UDim2.fromOffset(86, 86), Position = UDim2.fromOffset(35 - 43, 35 - 43),
+        ScaleType = Enum.ScaleType.Fit, ZIndex = 1, Parent = Sidebar,
     })
     new("ImageLabel", {
         BackgroundTransparency = 1, Image = Library:LoadIcon("logo"),
-        Size = UDim2.fromOffset(46, 39), Position = UDim2.fromOffset(12, 15), Parent = Sidebar,
+        ImageColor3 = Color3.fromRGB(255, 255, 255), ScaleType = Enum.ScaleType.Fit,
+        Size = UDim2.fromOffset(44, 46), Position = UDim2.fromOffset(35 - 22, 35 - 23),
+        ZIndex = 2, Parent = Sidebar,
     })
     task.spawn(function() -- slow logo breathe
         while ScreenGui.Parent do
-            tween(LogoGlow, { ImageTransparency = 0.5 }, 1.4, Enum.EasingStyle.Sine)
+            tween(LogoHalo, { ImageTransparency = 0.42 }, 1.4, Enum.EasingStyle.Sine)
             task.wait(1.4)
-            tween(LogoGlow, { ImageTransparency = 0.82 }, 1.4, Enum.EasingStyle.Sine)
+            tween(LogoHalo, { ImageTransparency = 0.72 }, 1.4, Enum.EasingStyle.Sine)
             task.wait(1.4)
         end
     end)
@@ -201,8 +251,8 @@ function Library:CreateWindow(opts)
         Position = UDim2.new(1, -50, 0, 28), Text = "", AutoButtonColor = false, Parent = Body,
     })
     local GearIco = new("ImageLabel", {
-        BackgroundTransparency = 1, Image = "rbxassetid://11963341447", ImageColor3 = T.Icon,
-        Size = UDim2.fromScale(1, 1), Parent = Gear,
+        BackgroundTransparency = 1, Image = Library:LoadIcon("gear"), ImageColor3 = T.Icon,
+        ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromScale(1, 1), Parent = Gear,
     })
     conn(Gear.MouseEnter, function() tween(GearIco, { ImageColor3 = T.Text, Rotation = 45 }, 0.2) end)
     conn(Gear.MouseLeave, function() tween(GearIco, { ImageColor3 = T.Icon, Rotation = 0 }, 0.2) end)
@@ -237,8 +287,29 @@ function Library:CreateWindow(opts)
         end)
     end
 
+    -- Popups (colour picker / keybind panel) live in their own top layer so they float
+    -- above the panels instead of being clipped by a section's ScrollingFrame.
+    local PopupLayer = new("Frame", {
+        Name = "Popups", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+        ZIndex = 50, Parent = Main,
+    })
+    self._popupLayer = PopupLayer
+
+    if opts.ToggleKey then Library.ToggleKey = opts.ToggleKey end
     conn(UserInputService.InputBegan, function(i, gp)
-        if not gp and i.KeyCode == Library.ToggleKey then ScreenGui.Enabled = not ScreenGui.Enabled end
+        if gp then return end
+        if i.KeyCode == Library.ToggleKey and not Library._rebinding then
+            ScreenGui.Enabled = not ScreenGui.Enabled
+            Library:ClosePopups()
+        end
+        -- click outside closes any open popup
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            task.defer(function()
+                for _, p in ipairs(Library._popups) do
+                    if p.frame and p.frame.Visible and not p.hovering then p.close() end
+                end
+            end)
+        end
     end)
 
     local Window = { Tabs = {}, _title = title, _current = nil }
@@ -246,7 +317,8 @@ function Library:CreateWindow(opts)
     -- sidebar icon rail: Figma y = 101,158,214,264,298,351,405 (uneven -> use a table)
     local RAIL_Y = { 101, 158, 214, 264, 298, 351, 405, 459 }
 
-    function Window:AddTab(name, icon)
+    function Window:AddTab(name, icon, tabOpts)
+        tabOpts = tabOpts or {}
         local idx = #Window.Tabs + 1
         local Tab = { Name = name, _window = Window }
 
@@ -255,21 +327,26 @@ function Library:CreateWindow(opts)
             BackgroundTransparency = 1, Size = UDim2.fromOffset(46, 46),
             Position = UDim2.fromOffset(13, y - 8), Text = "", AutoButtonColor = false, Parent = Sidebar,
         })
-        -- glow behind the selected icon (the blue halo in the design)
+        -- Real radial bloom (glow.png), NOT a scaled copy of the icon -- a tinted enlarged
+        -- glyph just reads as a big blurry duplicate, which is what the last build did.
         local Glow = new("ImageLabel", {
-            BackgroundTransparency = 1, Image = icon and Library:LoadIcon(icon) or "",
+            BackgroundTransparency = 1, Image = Library:LoadIcon("glow"),
             ImageColor3 = T.Accent, ImageTransparency = 1,
-            Size = UDim2.fromOffset(40, 40), Position = UDim2.new(0.5, -20, 0.5, -20), Parent = Btn,
+            Size = UDim2.fromOffset(44, 44), Position = UDim2.new(0.5, -22, 0.5, -22),
+            ScaleType = Enum.ScaleType.Fit, ZIndex = 1, Parent = Btn,
         })
+        -- ScaleType.Fit letterboxes inside the box, preserving each glyph's real aspect.
+        -- Without it the 140x86 pistol / 470x333 wifi get crushed into squares.
         local Ico = new("ImageLabel", {
             BackgroundTransparency = 1, Image = icon and Library:LoadIcon(icon) or "",
-            ImageColor3 = T.Icon, Size = UDim2.fromOffset(26, 26),
-            Position = UDim2.new(0.5, -13, 0.5, -13), Parent = Btn,
+            ImageColor3 = T.Icon, ScaleType = Enum.ScaleType.Fit,
+            Size = UDim2.fromOffset(26, 26), Position = UDim2.new(0.5, -13, 0.5, -13),
+            ZIndex = 2, Parent = Btn,
         })
         if not icon then
             Ico.Image = ""
             new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
-                Font = T.FontBold, TextSize = 12, TextColor3 = T.Icon, Text = name:sub(1, 2):upper(), Parent = Btn })
+                Font = T.FontBold, TextSize = 12, TextColor3 = T.Icon, Text = name:sub(1, 2):upper(), ZIndex = 2, Parent = Btn })
         end
 
         local Page = new("Frame", {
@@ -282,11 +359,11 @@ function Library:CreateWindow(opts)
             for _, t in ipairs(Window.Tabs) do
                 t._page.Visible = false
                 tween(t._ico, { ImageColor3 = T.Icon, Size = UDim2.fromOffset(26, 26) }, 0.16)
-                tween(t._glow, { ImageTransparency = 1, Size = UDim2.fromOffset(40, 40) }, 0.16)
+                tween(t._glow, { ImageTransparency = 1, Size = UDim2.fromOffset(44, 44) }, 0.16)
             end
             Page.Visible = true
-            tween(Ico, { ImageColor3 = T.Accent, Size = UDim2.fromOffset(30, 30) }, 0.18)
-            tween(Glow, { ImageTransparency = 0.55, Size = UDim2.fromOffset(52, 52) }, 0.25)
+            tween(Ico, { ImageColor3 = T.Accent, Size = UDim2.fromOffset(28, 28) }, 0.18)
+            tween(Glow, { ImageTransparency = 0.45, Size = UDim2.fromOffset(58, 58) }, 0.28)
             Window._current = Tab
             Library:SetCrumb(Window._title == name and name or (Window._root or "World"), name)
             Page.Position = UDim2.fromOffset(0, 8)
@@ -361,8 +438,8 @@ function Library:CreateWindow(opts)
                 if o.Keybind ~= false then
                     KB = new("ImageButton", {
                         BackgroundTransparency = 1, Image = Library:LoadIcon("keybind"),
-                        ImageColor3 = T.Icon, Size = UDim2.fromOffset(24, 24),
-                        Position = UDim2.fromOffset(300, 0), Parent = R,
+                        ImageColor3 = T.Icon, ScaleType = Enum.ScaleType.Fit,
+                        Size = UDim2.fromOffset(24, 24), Position = UDim2.fromOffset(300, 0), Parent = R,
                     })
                 end
 
@@ -380,24 +457,100 @@ function Library:CreateWindow(opts)
                 conn(Hit.MouseEnter, function() tween(Box, { BackgroundColor3 = Tg.Value and T.Accent or T.Hover }, 0.12) end)
                 conn(Hit.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
 
-                -- keybind picker on the glyph
+                -- Keybind PANEL: clicking the glyph spawns a popup (key + mode + clear)
+                -- rather than silently entering a listen state.
                 if KB then
-                    local key, binding = o.Key or "None", false
-                    conn(KB.MouseButton1Click, function()
-                        binding = true
-                        tween(KB, { ImageColor3 = T.Accent }, 0.12)
+                    local key, mode, binding = o.Key or "None", o.Mode or "Toggle", false
+                    Tg.Key, Tg.Mode = key, mode
+
+                    local P = Library:MakePopup(178, 96)
+                    new("TextLabel", {
+                        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 16), Font = T.FontBold,
+                        TextSize = 13, TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                        Text = "Keybind", ZIndex = 53, Parent = P.body,
+                    })
+                    local KeyBtn = new("TextButton", {
+                        BackgroundColor3 = T.Element, Size = UDim2.new(1, 0, 0, 26),
+                        Position = UDim2.fromOffset(0, 20), Text = "", AutoButtonColor = false,
+                        BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                    })
+                    corner(KeyBtn, 5)
+                    local KeyTxt = new("TextLabel", {
+                        BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Font = T.Font,
+                        TextSize = 13, TextColor3 = T.Text, Text = key, ZIndex = 54, Parent = KeyBtn,
+                    })
+                    new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
+                        Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, ZIndex = 54, Parent = KeyBtn })
+
+                    -- mode cycles Toggle -> Hold -> Always
+                    local ModeBtn = new("TextButton", {
+                        BackgroundColor3 = T.Element, Size = UDim2.new(1, -60, 0, 24),
+                        Position = UDim2.fromOffset(0, 52), Text = "", AutoButtonColor = false,
+                        BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                    })
+                    corner(ModeBtn, 5)
+                    local ModeTxt = new("TextLabel", {
+                        BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Font = T.Font,
+                        TextSize = 12, TextColor3 = T.TextDim, Text = mode, ZIndex = 54, Parent = ModeBtn,
+                    })
+                    local Clear = new("TextButton", {
+                        BackgroundColor3 = T.Element, Size = UDim2.fromOffset(54, 24),
+                        Position = UDim2.new(1, -54, 0, 52), Text = "", AutoButtonColor = false,
+                        BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                    })
+                    corner(Clear, 5)
+                    new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
+                        Font = T.Font, TextSize = 12, TextColor3 = T.TextDim, Text = "Clear", ZIndex = 54, Parent = Clear })
+
+                    local function setKey(k)
+                        key = k; Tg.Key = k
+                        KeyTxt.Text = k
+                        Library.Flags[flag .. "_Key"] = k
+                        tween(KB, { ImageColor3 = (k ~= "None") and T.Accent or T.Icon }, 0.12)
+                    end
+                    local MODES = { "Toggle", "Hold", "Always" }
+                    conn(ModeBtn.MouseButton1Click, function()
+                        local i = table.find(MODES, mode) or 1
+                        mode = MODES[(i % #MODES) + 1]
+                        Tg.Mode = mode
+                        ModeTxt.Text = mode
+                        Library.Flags[flag .. "_Mode"] = mode
                     end)
+                    conn(Clear.MouseButton1Click, function() setKey("None") end)
+                    conn(KeyBtn.MouseButton1Click, function()
+                        binding = true
+                        Library._rebinding = true
+                        KeyTxt.Text = "press a key..."
+                        KeyTxt.TextColor3 = T.Accent
+                    end)
+                    conn(KB.MouseButton1Click, function()
+                        if P.frame.Visible then P.close() else P.openAt(KB) end
+                    end)
+                    for _, b in ipairs({ KeyBtn, ModeBtn, Clear }) do
+                        conn(b.MouseEnter, function() tween(b, { BackgroundColor3 = T.Hover }, 0.1) end)
+                        conn(b.MouseLeave, function() tween(b, { BackgroundColor3 = T.Element }, 0.1) end)
+                    end
+
                     conn(UserInputService.InputBegan, function(i, gp)
                         if binding and i.UserInputType == Enum.UserInputType.Keyboard then
                             binding = false
-                            key = i.KeyCode.Name
-                            Library.Flags[flag .. "_Key"] = key
-                            tween(KB, { ImageColor3 = T.Icon }, 0.12)
+                            Library._rebinding = false
+                            KeyTxt.TextColor3 = T.Text
+                            setKey(i.KeyCode == Enum.KeyCode.Backspace and "None" or i.KeyCode.Name)
                             return
                         end
                         if gp or binding or key == "None" then return end
-                        if i.KeyCode == Enum.KeyCode[key] then Tg:SetValue(not Tg.Value) end
+                        if i.KeyCode == Enum.KeyCode[key] then
+                            if mode == "Toggle" then Tg:SetValue(not Tg.Value)
+                            elseif mode == "Hold" then Tg:SetValue(true) end
+                        end
                     end)
+                    conn(UserInputService.InputEnded, function(i)
+                        if mode == "Hold" and key ~= "None" and i.KeyCode == Enum.KeyCode[key] then
+                            Tg:SetValue(false)
+                        end
+                    end)
+                    if key ~= "None" then setKey(key) end
                 end
 
                 Tg:SetValue(Tg.Value, true)
@@ -620,6 +773,192 @@ function Library:CreateWindow(opts)
                 return Btn
             end
 
+            -- COLOR PICKER — swatch on the row, click it for an HSV panel.
+            -- The SV square is built from two UIGradients over a hue-coloured frame
+            -- (white->clear horizontally, clear->black vertically), so no image assets.
+            function Section:AddColorPicker(flag, o)
+                o = o or {}
+                local CP = { Value = o.Default or T.Accent, Type = "ColorPicker", Alpha = o.Alpha or 0 }
+                local h, s, v = CP.Value:ToHSV()
+
+                local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 23), Parent = Body_ })
+                new("TextLabel", {
+                    BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 0),
+                    Size = UDim2.new(1, -60, 1, 0), Font = T.Font, TextSize = T.TextSize,
+                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                    Text = o.Text or flag, Parent = R,
+                })
+                local Swatch = new("TextButton", {
+                    BackgroundColor3 = CP.Value, Size = UDim2.fromOffset(34, 20),
+                    Position = UDim2.fromOffset(288, 1), Text = "", AutoButtonColor = false,
+                    BorderSizePixel = 0, Parent = R,
+                })
+                corner(Swatch, 5)
+                new("UIStroke", { Color = Color3.fromRGB(60, 60, 60), Thickness = 1, Parent = Swatch })
+
+                local P = Library:MakePopup(200, o.Alpha and 210 or 190)
+
+                -- SV square
+                local SV = new("Frame", {
+                    BackgroundColor3 = Color3.fromHSV(h, 1, 1), Size = UDim2.fromOffset(180, 110),
+                    BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                })
+                corner(SV, 6)
+                local White = new("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 54, Parent = SV })
+                corner(White, 6)
+                new("UIGradient", {
+                    Color = ColorSequence.new(Color3.new(1, 1, 1)),
+                    Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
+                    Parent = White,
+                })
+                local Black = new("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 55, Parent = SV })
+                corner(Black, 6)
+                new("UIGradient", {
+                    Rotation = 90,
+                    Color = ColorSequence.new(Color3.new(0, 0, 0)),
+                    Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) }),
+                    Parent = Black,
+                })
+                local Cursor = new("Frame", {
+                    BackgroundTransparency = 1, Size = UDim2.fromOffset(10, 10),
+                    AnchorPoint = Vector2.new(0.5, 0.5), ZIndex = 56, Parent = SV,
+                })
+                corner(Cursor, 5)
+                new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Parent = Cursor })
+
+                -- hue bar
+                local Hue = new("Frame", {
+                    BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(180, 12),
+                    Position = UDim2.fromOffset(0, 118), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                })
+                corner(Hue, 6)
+                new("UIGradient", {
+                    Color = ColorSequence.new({
+                        ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+                        ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+                        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+                        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
+                        ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+                        ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+                        ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
+                    }), Parent = Hue,
+                })
+                local HueKnob = new("Frame", {
+                    BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(3, 16),
+                    AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+                    BorderSizePixel = 0, ZIndex = 54, Parent = Hue,
+                })
+                corner(HueKnob, 2)
+
+                -- alpha bar (optional)
+                local AlphaBar, AlphaKnob
+                if o.Alpha then
+                    AlphaBar = new("Frame", {
+                        BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(180, 12),
+                        Position = UDim2.fromOffset(0, 136), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                    })
+                    corner(AlphaBar, 6)
+                    new("UIGradient", {
+                        Color = ColorSequence.new(CP.Value),
+                        Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
+                        Parent = AlphaBar,
+                    })
+                    AlphaKnob = new("Frame", {
+                        BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(3, 16),
+                        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+                        BorderSizePixel = 0, ZIndex = 54, Parent = AlphaBar,
+                    })
+                    corner(AlphaKnob, 2)
+                end
+
+                -- hex box
+                local HexY = o.Alpha and 156 or 138
+                local HexBox = new("Frame", {
+                    BackgroundColor3 = T.Element, Size = UDim2.fromOffset(180, 24),
+                    Position = UDim2.fromOffset(0, HexY), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
+                })
+                corner(HexBox, 5)
+                local Hex = new("TextBox", {
+                    BackgroundTransparency = 1, Size = UDim2.new(1, -12, 1, 0),
+                    Position = UDim2.fromOffset(6, 0), Font = T.Font, TextSize = 12,
+                    TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
+                    Text = "#FFFFFF", ClearTextOnFocus = false, ZIndex = 54, Parent = HexBox,
+                })
+                new("Frame", { BackgroundColor3 = T.AccentDim, Size = UDim2.new(1, 0, 0, 2),
+                    Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, ZIndex = 54, Parent = HexBox })
+
+                local function refresh(silent)
+                    local col = Color3.fromHSV(h, s, v)
+                    CP.Value = col
+                    Library.Flags[flag] = col
+                    Swatch.BackgroundColor3 = col
+                    SV.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+                    Cursor.Position = UDim2.new(s, 0, 1 - v, 0)
+                    HueKnob.Position = UDim2.new(h, 0, 0.5, 0)
+                    Hex.Text = string.format("#%02X%02X%02X",
+                        math.floor(col.R * 255 + 0.5), math.floor(col.G * 255 + 0.5), math.floor(col.B * 255 + 0.5))
+                    if AlphaBar then
+                        AlphaBar.UIGradient.Color = ColorSequence.new(col)
+                        AlphaKnob.Position = UDim2.new(1 - CP.Alpha, 0, 0.5, 0)
+                    end
+                    if not silent and o.Callback then task.spawn(o.Callback, col, CP.Alpha) end
+                end
+
+                -- drag handling for SV / hue / alpha
+                local drag = nil
+                local function pick(input)
+                    if drag == "sv" then
+                        s = math.clamp((input.Position.X - SV.AbsolutePosition.X) / SV.AbsoluteSize.X, 0, 1)
+                        v = 1 - math.clamp((input.Position.Y - SV.AbsolutePosition.Y) / SV.AbsoluteSize.Y, 0, 1)
+                        refresh()
+                    elseif drag == "hue" then
+                        h = math.clamp((input.Position.X - Hue.AbsolutePosition.X) / Hue.AbsoluteSize.X, 0, 1)
+                        refresh()
+                    elseif drag == "alpha" and AlphaBar then
+                        CP.Alpha = 1 - math.clamp((input.Position.X - AlphaBar.AbsolutePosition.X) / AlphaBar.AbsoluteSize.X, 0, 1)
+                        refresh()
+                    end
+                end
+                conn(SV.InputBegan, function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "sv" pick(i) end
+                end)
+                conn(Hue.InputBegan, function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "hue" pick(i) end
+                end)
+                if AlphaBar then
+                    conn(AlphaBar.InputBegan, function(i)
+                        if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = "alpha" pick(i) end
+                    end)
+                end
+                conn(UserInputService.InputChanged, function(i)
+                    if drag and i.UserInputType == Enum.UserInputType.MouseMovement then pick(i) end
+                end)
+                conn(UserInputService.InputEnded, function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = nil end
+                end)
+                conn(Hex.FocusLost, function()
+                    local hx = Hex.Text:gsub("#", "")
+                    if #hx == 6 and tonumber(hx, 16) then
+                        local n = tonumber(hx, 16)
+                        local col = Color3.fromRGB(bit32.band(bit32.rshift(n, 16), 255), bit32.band(bit32.rshift(n, 8), 255), bit32.band(n, 255))
+                        h, s, v = col:ToHSV()
+                    end
+                    refresh()
+                end)
+                conn(Swatch.MouseButton1Click, function()
+                    if P.frame.Visible then P.close() else P.openAt(Swatch) end
+                end)
+
+                function CP:SetValue(col, silent)
+                    h, s, v = col:ToHSV()
+                    refresh(silent)
+                end
+                function CP:GetValue() return self.Value end
+                refresh(true)
+                Library.Options[flag] = CP
+                return CP
+            end
+
             function Section:AddLabel(text)
                 local L = new("TextLabel", {
                     BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 18),
@@ -635,7 +974,14 @@ function Library:CreateWindow(opts)
         end
 
         table.insert(Window.Tabs, Tab)
-        if #Window.Tabs == 1 then task.defer(function() Tab:Select() end) end
+        -- Default = which tab opens selected. Without this the FIRST tab always lit up,
+        -- so the star glowed blue instead of the globe like the design.
+        if tabOpts.Default then Window._default = Tab end
+        if #Window.Tabs == 1 then
+            task.defer(function() (Window._default or Tab):Select() end)
+        elseif tabOpts.Default then
+            task.defer(function() Tab:Select() end)
+        end
         return Tab
     end
 
