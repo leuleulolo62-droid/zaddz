@@ -107,6 +107,25 @@ function Library:ClosePopups(except)
     end
 end
 
+-- Is this control currently sitting UNDER an open overlay?
+--
+-- Active=true on the popup is NOT enough: it governs GuiButton clicks and gameProcessedEvent,
+-- but GuiObject.InputBegan fires for ANY frame whose bounds contain the pointer regardless of
+-- what is drawn on top -- and sliders start dragging from Box.InputBegan. So each control has
+-- to check for itself. Uses the popups' existing hover flags rather than coordinates, because
+-- GetMouseLocation() includes the topbar inset while AbsolutePosition does not.
+function Library:InputBlocked(obj)
+    if not obj then return false end
+    for _, p in ipairs(self._popups) do
+        if p.frame and p.frame.Visible and p.hovering and not obj:IsDescendantOf(p.frame) then
+            return true
+        end
+    end
+    local S = self._settings -- same story for the settings modal sitting over the tabs
+    if S and S.Visible and self._settingsHover and not obj:IsDescendantOf(S) then return true end
+    return false
+end
+
 -- Shared popup panel: same look as a section (#1e1e1e r12), floats in the popup layer,
 -- anchored under whatever element opened it. Only one is ever open at a time.
 function Library:MakePopup(w, h)
@@ -822,7 +841,10 @@ buildSection = function(Body_)
                 if not silent and o.Callback then task.spawn(o.Callback, self.Value) end
             end
             function Tg:GetValue() return self.Value end
-            conn(Hit.MouseButton1Click, function() Tg:SetValue(not Tg.Value) end)
+            conn(Hit.MouseButton1Click, function()
+                if Library:InputBlocked(R) then return end
+                Tg:SetValue(not Tg.Value)
+            end)
             conn(Hit.MouseEnter, function() tween(Box, { BackgroundColor3 = Tg.Value and T.Accent or T.Hover }, 0.12) end)
             conn(Hit.MouseLeave, function() -- settle back to the state colour, not always Element
                 tween(Box, { BackgroundColor3 = Tg.Value and T.AccentDim or T.Element }, 0.12)
@@ -994,6 +1016,7 @@ buildSection = function(Body_)
                 set(min + (max - min) * a)
             end
             conn(Box.InputBegan, function(i)
+                if Library:InputBlocked(R) then return end -- an overlay is over this row
                 if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
                     dragging = true; fromX(i.Position.X)
                     tween(Under, { BackgroundColor3 = T.Accent }, 0.1)
@@ -1014,6 +1037,7 @@ buildSection = function(Body_)
             -- range snapped to the slider's own rounding, so an int slider moves whole units.
             conn(Box.InputChanged, function(i)
                 if not hovering or i.UserInputType ~= Enum.UserInputType.MouseWheel then return end
+                if Library:InputBlocked(R) then return end
                 local step = o.Step
                 if not step then
                     step = (max - min) / 50
@@ -1107,6 +1131,7 @@ buildSection = function(Body_)
                 P.close()
             end
             conn(Box.MouseButton1Click, function()
+                if Library:InputBlocked(R) then return end
                 if D.Open then D:Close() return end
                 D.Open = true
                 P.openAt(Box, math.clamp(#values * 28 + 16, 44, 190)) -- grow to fit, then scroll
@@ -1181,7 +1206,10 @@ buildSection = function(Body_)
                 Position = UDim2.new(0, 0, 1, -2), BorderSizePixel = 0, Parent = Btn })
             conn(Btn.MouseEnter, function() tween(Btn, { BackgroundColor3 = T.Hover }, 0.12) end)
             conn(Btn.MouseLeave, function() tween(Btn, { BackgroundColor3 = T.Element }, 0.12) end)
-            conn(Btn.MouseButton1Click, function() if cb then task.spawn(cb) end end)
+            conn(Btn.MouseButton1Click, function()
+                if Library:InputBlocked(Btn) then return end
+                if cb then task.spawn(cb) end
+            end)
             Library:AttachTooltip(Btn, tip)
             return Btn
         end
@@ -1226,6 +1254,7 @@ buildSection = function(Body_)
             end
             function K:GetValue() return self.Value end
             conn(Box.MouseButton1Click, function()
+                if Library:InputBlocked(R) then return end
                 listening = true
                 Library._rebinding = true -- stop the menu's own toggle key firing mid-bind
                 KeyTxt.Text = "press a key..."
@@ -1430,6 +1459,9 @@ buildSection = function(Body_)
                 refresh()
             end)
             conn(Swatch.MouseButton1Click, function()
+                -- guard against ANOTHER picker's panel covering this swatch. P itself is
+                -- excluded, so re-clicking to close your own open panel still works.
+                if Library:InputBlocked(R) and not P.hovering then return end
                 if P.frame.Visible then P.close() else P.openAt(Swatch) end
             end)
 
