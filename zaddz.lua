@@ -305,24 +305,27 @@ function Library:CreateWindow(opts)
 
     local Window = { Tabs = {}, _title = title, _current = nil }
 
-    -- Sidebar rail, measured off Figma node 1:3. The icons are NOT evenly spaced and are
-    -- NOT the same size, so both come from the table -- a single pitch/size is what made
-    -- the eye->pistol gap collapse to 34px and crushed the 42px pistol into a 26px box.
-    -- y is the node top; centres land at 115.5/172/225/275.5/319/365.5/418.5.
+    -- Sidebar rail, measured off the rendered Figma design (node 1:3), not its node boxes.
+    -- The node box is NOT the glyph: Figma fills each box with the ORIGINAL padded art at
+    -- scaleMode=FILL, so e.g. the pistol sits in a 42x42 node but only inks 23x14. Our PNGs
+    -- are trimmed ink-tight, so sizing to the node box drew the pistol 1.83x oversized --
+    -- which is what made the neighbouring globe read as "too tiny".
+    -- w/h below are the measured ink; cx/cy the measured ink centre. Fit + ink-tight art
+    -- reproduces the render to within half a pixel.
     local RAIL = {
-        { x = 20, y = 101, w = 32, h = 29 }, -- star
-        { x = 25, y = 158, w = 28, h = 28 }, -- wifi
-        { x = 29, y = 214, w = 22, h = 22 }, -- globe
-        { x = 28, y = 264, w = 23, h = 23 }, -- eye
-        { x = 18, y = 298, w = 42, h = 42 }, -- pistol
-        { x = 24, y = 351, w = 29, h = 29 }, -- car
-        { x = 24, y = 405, w = 27, h = 27 }, -- grid
+        { cx = 36.0, cy = 115.5, w = 32.0, h = 29.0 }, -- star
+        { cx = 38.8, cy = 171.8, w = 25.5, h = 18.5 }, -- wifi
+        { cx = 39.8, cy = 225.0, w = 22.5, h = 22.0 }, -- globe
+        { cx = 39.5, cy = 273.3, w = 23.0, h = 18.5 }, -- eye
+        { cx = 39.0, cy = 319.0, w = 23.0, h = 14.0 }, -- pistol
+        { cx = 38.3, cy = 366.5, w = 24.5, h = 22.0 }, -- car
+        { cx = 37.5, cy = 418.5, w = 27.0, h = 27.0 }, -- grid
     }
     local function railSlot(idx)
         local s = RAIL[idx]
         if s then return s end
         local last = RAIL[#RAIL] -- extra tabs continue on the design's mean pitch
-        return { x = 24, y = last.y + (idx - #RAIL) * 53, w = 27, h = 27 }
+        return { cx = 37.5, cy = last.cy + (idx - #RAIL) * 53, w = 24, h = 24 }
     end
     -- Figma's selected-tab glow is a DROP_SHADOW: colour #387BDB, radius 15.3, offset 0.
     -- It is dimmer than the glyph accent and only spreads ~13px -- not a 58px accent bloom.
@@ -334,7 +337,7 @@ function Library:CreateWindow(opts)
         local Tab = { Name = name, _window = Window }
 
         local slot = railSlot(idx)
-        local cx, cy = slot.x + slot.w / 2, slot.y + slot.h / 2
+        local cx, cy = slot.cx, slot.cy
         local Btn = new("TextButton", { -- invisible hit area, centred on the glyph
             BackgroundTransparency = 1, Size = UDim2.fromOffset(46, 46),
             Position = UDim2.fromOffset(math.floor(cx - 23), math.floor(cy - 23)),
