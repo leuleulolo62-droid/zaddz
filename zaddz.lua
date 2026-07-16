@@ -1514,6 +1514,17 @@ buildSection = function(Body_)
             return { Refresh = refresh }
         end
 
+        -- DIVIDER — a hairline rule between groups of rows.
+        function Section:AddDivider()
+            local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 7), Parent = Body_ })
+            new("Frame", {
+                BackgroundColor3 = Color3.fromRGB(60, 60, 60), BackgroundTransparency = 0.35,
+                Size = UDim2.new(1, -40, 0, 1), Position = UDim2.new(0.5, 0, 0.5, 0),
+                AnchorPoint = Vector2.new(0.5, 0.5), BorderSizePixel = 0, Parent = R,
+            })
+            return R
+        end
+
         function Section:AddLabel(text)
             local L = new("TextLabel", {
                 BackgroundTransparency = 1, Size = UDim2.new(1, -40, 0, 18),
@@ -1775,17 +1786,41 @@ function Library:CreateWindow(opts)
         end)
 
         -- Panels. Left = 342x452 @ (3,2) of the container, Right = 342x373 @ (356,0).
+        -- Each side is a SCROLLING COLUMN that panels stack into, rather than one panel
+        -- pinned per side. A single section still lands exactly where the Figma puts it
+        -- (342 wide, left at x=3 / right at x=356); more than one stacks and the column
+        -- scrolls. Without this, a tab with several groupboxes drew them all on top of
+        -- each other.
+        local function column(right)
+            local key = right and "_rightCol" or "_leftCol"
+            if Tab[key] then return Tab[key] end
+            local col = new("ScrollingFrame", {
+                Name = right and "Right" or "Left", BackgroundTransparency = 1, BorderSizePixel = 0,
+                Position = right and UDim2.fromOffset(356, 0) or UDim2.fromOffset(3, 2),
+                Size = UDim2.fromOffset(342, right and 458 or 456),
+                CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                ScrollBarThickness = 2, ScrollBarImageColor3 = T.Scroll,
+                ScrollBarImageTransparency = 0, Parent = Page,
+            })
+            new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
+                HorizontalAlignment = Enum.HorizontalAlignment.Center, Parent = col })
+            Tab[key] = col
+            return col
+        end
+
         function Tab:AddSection(sTitle, side)
             local right = (side == "Right")
             local Section = {}
+            local col = column(right)
 
+            -- AutomaticSize.Y: the panel grows to its content instead of a fixed 452/373,
+            -- so stacked sections take only the room they need and the column scrolls.
             local Panel = new("Frame", {
-                BackgroundColor3 = T.Panel,
-                Size = UDim2.fromOffset(342, right and 373 or 452),
-                Position = right and UDim2.fromOffset(356, 0) or UDim2.fromOffset(3, 2),
-                BorderSizePixel = 0, Parent = Page,
+                BackgroundColor3 = T.Panel, Size = UDim2.new(1, 0, 0, 0),
+                AutomaticSize = Enum.AutomaticSize.Y, BorderSizePixel = 0, Parent = col,
             })
             corner(Panel, 12)
+            new("UIPadding", { PaddingBottom = UDim.new(0, 10), Parent = Panel })
 
             -- title, centred (Figma "Conditions" / "Customization")
             new("TextLabel", {
@@ -1794,14 +1829,11 @@ function Library:CreateWindow(opts)
                 TextColor3 = T.Text, Text = sTitle or "Section", Parent = Panel,
             })
 
-            -- scrolling body. Left rows start at y=33 (Figma 158-125), right at y=46.
-            local Body_ = new("ScrollingFrame", {
-                BackgroundTransparency = 1, BorderSizePixel = 0,
-                Position = UDim2.fromOffset(0, right and 40 or 28),
-                Size = UDim2.new(1, 0, 1, right and -46 or -34),
-                CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                ScrollBarThickness = 2, ScrollBarImageColor3 = T.Scroll,
-                ScrollBarImageTransparency = 0, Parent = Panel,
+            -- Plain Frame + AutomaticSize, NOT a ScrollingFrame: the column scrolls now,
+            -- and a scroll region inside a scroll region is miserable to use.
+            local Body_ = new("Frame", {
+                BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 30),
+                Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = Panel,
             })
             -- Center: AddButton/AddLabel parent directly to Body_, and a UIListLayout
             -- discards a child's own Position -- so they sat at x=0 while row-wrapped
