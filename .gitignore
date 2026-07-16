@@ -1,0 +1,10 @@
+node_modules/
+
+# scratch: temp downloads / render comparisons used while matching the Figma design
+pub.lua
+render.png
+img.json
+file.json
+node*.json
+*_sheet.png
+sidebar_ref.png

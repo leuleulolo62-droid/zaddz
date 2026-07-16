@@ -15,13 +15,15 @@ local Misc  = Window:AddTab("Misc",         "grid")
 
 -- ─────────────────────────── LOCAL PLAYER (the Figma screen)
 local C = World:AddSection("Conditions", "Left")
-C:AddToggle("GodMode",         { Text = "God Mode",         Key = "G" })
+C:AddToggle("GodMode",         { Text = "God Mode", Key = "G",
+    Tooltip = "Blocks all incoming damage." })
 C:AddToggle("SemGodMode",      { Text = "Sem God Mode" })
 C:AddToggle("Invisible",       { Text = "Invsible" })
 C:AddToggle("SuperJump",       { Text = "Super Jump",       Key = "Space", Mode = "Hold" })
 C:AddToggle("InfiniteStamina", { Text = "Infinite Stamina" })
 C:AddToggle("NoRagdoll",       { Text = "No Ragdoll" })
-C:AddToggle("NoClip",          { Text = "NoClip", Default = true, Key = "N" })
+C:AddToggle("NoClip",          { Text = "NoClip", Default = true, Key = "N",
+    Tooltip = "Walk through walls. Disables collision on your character." })
 C:AddToggle("InvisibleNoClip", { Text = "Invisible NoClip", Default = true })
 C:AddToggle("RunSpeedTgl",     { Text = "Run Speed" })
 C:AddToggle("SwimSpeedTgl",    { Text = "Swim Speed" })
@@ -32,7 +34,8 @@ local Cu = World:AddSection("Customization", "Right")
 Cu:AddSlider("NoClipSpeed", { Text = "NoClip Speed",          Min = 0, Max = 10, Default = 1 })
 Cu:AddSlider("RunMult",     { Text = "Run Speed Multiplier",  Min = 0, Max = 10, Default = 1, Suffix = "x" })
 Cu:AddSlider("SwimMult",    { Text = "Swim Speed Multiplier", Min = 0, Max = 10, Default = 1, Suffix = "x" })
-Cu:AddDropdown("NoClipMode", { Text = "NoClip Mode", Values = { "Direction", "Camera", "Free" }, Default = "Direction" })
+Cu:AddDropdown("NoClipMode", { Text = "NoClip Mode", Values = { "Direction", "Camera", "Free" }, Default = "Direction",
+    Tooltip = "Direction follows your input; Camera follows where you look." })
 Cu:AddTextbox("HealthAmount", { Text = "Health Amount", Default = "100" })
 Cu:AddTextbox("ArmorAmount",  { Text = "Armor Amount",  Default = "100" })
 
@@ -86,8 +89,10 @@ local W1 = Weap:AddSection("Aimbot", "Left")
 W1:AddToggle("AimEnabled", { Text = "Enabled", Key = "MouseButton2", Mode = "Hold" })
 W1:AddToggle("AimVisible", { Text = "Visible Check" })
 W1:AddToggle("AimTeam",    { Text = "Team Check" })
-W1:AddToggle("SilentAim",  { Text = "Silent Aim" })
-W1:AddSlider("AimFOV",    { Text = "FOV",    Min = 0, Max = 500, Default = 120, Rounding = 0, Format = "%d" })
+W1:AddToggle("SilentAim",  { Text = "Silent Aim",
+    Tooltip = "Redirects the bullet server-side without moving your camera." })
+W1:AddSlider("AimFOV",    { Text = "FOV", Min = 0, Max = 500, Default = 120, Rounding = 0, Format = "%d",
+    Tooltip = "Radius in pixels the aimbot will search for a target." })
 W1:AddSlider("AimSmooth", { Text = "Smoothing", Min = 0, Max = 1, Default = 0.25 })
 W1:AddDropdown("AimPart", { Text = "Target Part", Values = { "Head", "Torso", "Nearest" }, Default = "Head" })
 local W2 = Weap:AddSection("Weapon Mods", "Right")
@@ -112,16 +117,21 @@ Ve2:AddButton("Spawn Vehicle", function() Library:Notify("Spawned " .. tostring(
 
 -- ─────────────────────────── MISC / SETTINGS
 local M1 = Misc:AddSection("Settings", "Left")
-M1:AddToggle("Watermark",  { Text = "Watermark", Default = true })
-M1:AddToggle("Keybinds",   { Text = "Keybind List" })
+M1:AddToggle("Watermark", { Text = "Watermark", Default = true,
+    Callback = function(v) Library:SetWatermark(v) end })
+M1:AddToggle("Keybinds", { Text = "Keybind List", Key = "K",
+    Callback = function(v) Library:SetKeybindList(v) end })
 M1:AddColorPicker("Accent", { Text = "Menu Accent", Default = Color3.fromRGB(5, 150, 255),
-    Callback = function(c) Library.Theme.Accent = c end })
+    Callback = function(c) Library:SetAccent(c) end })
 M1:AddDropdown("MenuKey", { Text = "Menu Key", Values = { "Insert", "RightShift", "RightControl", "F4" }, Default = "Insert",
     Callback = function(v) Library.ToggleKey = Enum.KeyCode[v] end })
 local M2 = Misc:AddSection("Config", "Right")
 M2:AddTextbox("ConfigName", { Text = "Config Name", Placeholder = "default" })
 M2:AddButton("Save Config", function() Library:Notify("Saved " .. tostring(Library.Flags.ConfigName)) end)
 M2:AddButton("Load Config", function() Library:Notify("Loaded") end)
-M2:AddButton("Unload", function() Library:Unload() end)
+M2:AddButton("Unload", function() Library:Unload() end, "Destroys the menu. Re-execute the script to get it back.")
+
+-- Defaults are applied silently (no callback), so drive the initial HUD state directly.
+Library:SetWatermark(true)
 
 Library:Notify("zaddz loaded — INSERT to toggle", 4)
