@@ -1250,7 +1250,16 @@ buildSection = function(Body_)
         -- (white->clear horizontally, clear->black vertically), so no image assets.
         function Section:AddColorPicker(flag, o)
             o = o or {}
-            local CP = { Value = o.Default or T.Accent, Type = "ColorPicker", Alpha = o.Alpha or 0 }
+            -- o.Alpha is a FLAG ("show the alpha bar"), not the value. Storing it straight
+            -- into CP.Alpha meant Alpha=true produced "1 - true" -> arithmetic on a boolean,
+            -- which killed the caller's script mid-build. Accept a number as the initial
+            -- value too, and default to 1 = fully opaque.
+            local alphaOn = o.Alpha ~= nil and o.Alpha ~= false
+            local alpha0 = (type(o.Alpha) == "number" and o.Alpha)
+                or (type(o.AlphaValue) == "number" and o.AlphaValue)
+                or (type(o.Transparency) == "number" and (1 - o.Transparency)) or 1
+            local CP = { Value = o.Default or T.Accent, Type = "ColorPicker",
+                Alpha = alphaOn and math.clamp(alpha0, 0, 1) or 1, HasAlpha = alphaOn }
             local h, s, v = CP.Value:ToHSV()
 
             local R = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 23), Parent = Body_ })
@@ -1271,7 +1280,7 @@ buildSection = function(Body_)
             corner(Swatch, 5)
             new("UIStroke", { Color = Color3.fromRGB(60, 60, 60), Thickness = 1, Parent = Swatch })
 
-            local P = Library:MakePopup(200, o.Alpha and 210 or 190)
+            local P = Library:MakePopup(200, alphaOn and 210 or 190)
 
             -- SV square
             local SV = new("Frame", {
@@ -1327,7 +1336,7 @@ buildSection = function(Body_)
 
             -- alpha bar (optional)
             local AlphaBar, AlphaKnob
-            if o.Alpha then
+            if alphaOn then
                 AlphaBar = new("Frame", {
                     BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromOffset(180, 12),
                     Position = UDim2.fromOffset(0, 136), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
@@ -1347,7 +1356,7 @@ buildSection = function(Body_)
             end
 
             -- hex box
-            local HexY = o.Alpha and 156 or 138
+            local HexY = alphaOn and 156 or 138
             local HexBox = new("Frame", {
                 BackgroundColor3 = T.Element, Size = UDim2.fromOffset(180, 24),
                 Position = UDim2.fromOffset(0, HexY), BorderSizePixel = 0, ZIndex = 53, Parent = P.body,
