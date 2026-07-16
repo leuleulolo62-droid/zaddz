@@ -62,6 +62,32 @@ local function TW(t, style, dir)
     return TweenInfo.new(t or 0.18, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out)
 end
 
+-- Keybinds by NAME, covering mouse buttons.
+--
+-- "MouseButton2" is an Enum.UserInputType, NOT an Enum.KeyCode, and indexing
+-- Enum.KeyCode with it throws ("MouseButton2 is not a valid member of Enum.KeyCode").
+-- Aim-on-right-click is a normal bind, so resolve names through both enums and never
+-- index an enum with an unvalidated string.
+local MOUSE_KEYS = { MouseButton1 = true, MouseButton2 = true, MouseButton3 = true }
+local function toKeyCode(name)
+    local ok, kc = pcall(function() return Enum.KeyCode[name] end)
+    return ok and kc or nil
+end
+local function keyMatches(name, input)
+    if not name or name == "None" then return false end
+    if MOUSE_KEYS[name] then return input.UserInputType == Enum.UserInputType[name] end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return false end
+    return input.KeyCode == toKeyCode(name)
+end
+-- name for an input, or nil if it isn't bindable
+local function keyNameOf(input)
+    for m in pairs(MOUSE_KEYS) do
+        if input.UserInputType == Enum.UserInputType[m] then return m end
+    end
+    if input.UserInputType == Enum.UserInputType.Keyboard then return input.KeyCode.Name end
+    return nil
+end
+
 -- ------------------------------------------------------------------ helpers
 
 local function new(class, props, children)
@@ -938,21 +964,23 @@ buildSection = function(Body_)
                 end
 
                 conn(UserInputService.InputBegan, function(i, gp)
-                    if binding and i.UserInputType == Enum.UserInputType.Keyboard then
+                    if binding then
+                        local n = keyNameOf(i) -- accepts mouse buttons, not just keyboard
+                        if not n then return end
                         binding = false
                         Library._rebinding = false
                         KeyTxt.TextColor3 = T.Text
-                        setKey(i.KeyCode == Enum.KeyCode.Backspace and "None" or i.KeyCode.Name)
+                        setKey(n == "Backspace" and "None" or n)
                         return
                     end
-                    if gp or binding or key == "None" then return end
-                    if i.KeyCode == Enum.KeyCode[key] then
+                    if gp or key == "None" then return end
+                    if keyMatches(key, i) then
                         if mode == "Toggle" then Tg:SetValue(not Tg.Value)
                         elseif mode == "Hold" then Tg:SetValue(true) end
                     end
                 end)
                 conn(UserInputService.InputEnded, function(i)
-                    if mode == "Hold" and key ~= "None" and i.KeyCode == Enum.KeyCode[key] then
+                    if mode == "Hold" and keyMatches(key, i) then
                         Tg:SetValue(false)
                     end
                 end)
@@ -1261,10 +1289,12 @@ buildSection = function(Body_)
                 KeyTxt.TextColor3 = T.Accent
             end)
             conn(UserInputService.InputBegan, function(i)
-                if not listening or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                if not listening then return end
+                local n = keyNameOf(i) -- mouse buttons are bindable too
+                if not n then return end
                 listening = false
                 Library._rebinding = false
-                K:SetValue(i.KeyCode == Enum.KeyCode.Backspace and "None" or i.KeyCode.Name)
+                K:SetValue(n == "Backspace" and "None" or n)
             end)
             conn(Box.MouseEnter, function() tween(Box, { BackgroundColor3 = T.Hover }, 0.12) end)
             conn(Box.MouseLeave, function() tween(Box, { BackgroundColor3 = T.Element }, 0.12) end)
