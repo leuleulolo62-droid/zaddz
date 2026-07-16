@@ -1,0 +1,19 @@
+{
+  "name": "figma-roblox-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that reads Figma files and converts frames into Roblox GUI (Luau) code",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "figma-roblox-mcp": "index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
