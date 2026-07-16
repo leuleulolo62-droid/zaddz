@@ -50,7 +50,6 @@ local Library = {
     },
     ToggleKey = Enum.KeyCode.Insert,
     IconBase = "https://raw.githubusercontent.com/leuleulolo62-droid/zaddz/main/icons/",
-    IconVersion = "v2", -- bump on any icons/ change to invalidate the on-disk cache
     _icons = {},
     _popups = {},
 }
@@ -79,15 +78,9 @@ function Library:LoadIcon(name)
     if self._icons[name] then return self._icons[name] end
     local id = ""
     local ok = pcall(function()
-        -- Cache is keyed by IconVersion: icons are only fetched when the file is absent,
-        -- so a folder populated by an older build keeps serving stale art forever. The
-        -- icons were re-trimmed after the first release, and the stale padded copies then
-        -- drew at the new ink-tight sizes -- i.e. shrunk twice. Bump IconVersion whenever
-        -- icons/ changes; the new folder simply misses and re-downloads.
-        local dir = "zaddz_icons_" .. Library.IconVersion
-        local path = dir .. "/" .. name .. ".png"
+        local path = "zaddz_icons/" .. name .. ".png"
         if not (isfile and isfile(path)) then
-            if makefolder and not (isfolder and isfolder(dir)) then makefolder(dir) end
+            if makefolder and not (isfolder and isfolder("zaddz_icons")) then makefolder("zaddz_icons") end
             local data = game:HttpGet(self.IconBase .. name .. ".png", true)
             writefile(path, data)
         end
